@@ -18,114 +18,15 @@
    ================================================================ */
 
 /* ================================================================
-   1. CORE — STORAGE
-   Maneja toda la persistencia en localStorage.
-   Clave única: 'sinergia_rea_db'
-   Estructura: { clients, tasks, absences, appointments, meta }
+   1. CORE — STORAGE (Firebase Edition)
+   Las funciones dbGet/dbCreate/dbUpdate/dbDelete son inyectadas
+   por firebase-config.js en window.* antes de que init() corra.
+   getDB() y saveDB() también vienen de firebase-config.js.
    ================================================================ */
 
-/** Clave única de la base de datos en localStorage */
-const DB_KEY = 'sinergia_rea_db';
-
-/**
- * Genera un ID único combinando timestamp + random string.
- * Se usa para identificar cada registro (cliente, tarea, etc.)
- * @returns {string} ID único como "m8gj2k3x9a"
- */
-function uuid() {
-  return Date.now().toString(36) + Math.random().toString(36).slice(2);
-}
-
-/**
- * Inicializa la base de datos si no existe.
- * Solo crea la estructura la primera vez que se abre la app.
- * Si ya existe data, no la sobreescribe.
- */
+/** No-op: Firebase ya inicializó los datos en firebaseBootstrap() */
 function initDB() {
-  const existing = localStorage.getItem(DB_KEY);
-  if (!existing) {
-    const base = {
-      clients:      [],   // Array de objetos Cliente
-      tasks:        [],   // Array de objetos Tarea
-      absences:     [],   // Array de objetos Falta
-      appointments: [],   // Array de objetos Cita
-      meta: {
-        lastMonthCheck: new Date().getMonth(),  // Para detectar cambio de mes
-        lastLogin:      new Date().toISOString()
-      }
-    };
-    localStorage.setItem(DB_KEY, JSON.stringify(base));
-    console.log('[Sinergia REA] Base de datos inicializada.');
-  }
-}
-
-/**
- * Lee y retorna toda la base de datos del localStorage.
- * @returns {Object} Objeto con clients, tasks, absences, appointments, meta
- */
-function getDB() {
-  return JSON.parse(localStorage.getItem(DB_KEY));
-}
-
-/**
- * Guarda la base de datos completa en localStorage.
- * @param {Object} db - Objeto completo de la base de datos
- */
-function saveDB(db) {
-  localStorage.setItem(DB_KEY, JSON.stringify(db));
-}
-
-/* ── Operaciones CRUD genéricas ── */
-
-/**
- * Obtiene todos los registros de una entidad.
- * @param {string} entity - 'clients' | 'tasks' | 'absences' | 'appointments'
- * @returns {Array} Array de registros
- */
-function dbGet(entity) {
-  return getDB()[entity] || [];
-}
-
-/**
- * Crea un nuevo registro en una entidad.
- * Agrega automáticamente: id y createdAt.
- * @param {string} entity - Entidad destino
- * @param {Object} obj - Datos del nuevo registro (sin id ni createdAt)
- * @returns {Object} Registro creado con id y createdAt
- */
-function dbCreate(entity, obj) {
-  const db = getDB();
-  obj.id        = uuid();
-  obj.createdAt = new Date().toISOString();
-  db[entity].push(obj);
-  saveDB(db);
-  return obj;
-}
-
-/**
- * Actualiza campos específicos de un registro existente.
- * @param {string} entity - Entidad objetivo
- * @param {string} id     - ID del registro a actualizar
- * @param {Object} changes - Campos a sobreescribir
- */
-function dbUpdate(entity, id, changes) {
-  const db  = getDB();
-  const idx = db[entity].findIndex(x => x.id === id);
-  if (idx !== -1) {
-    db[entity][idx] = { ...db[entity][idx], ...changes };
-    saveDB(db);
-  }
-}
-
-/**
- * Elimina un registro por su ID.
- * @param {string} entity - Entidad objetivo
- * @param {string} id     - ID del registro a eliminar
- */
-function dbDelete(entity, id) {
-  const db    = getDB();
-  db[entity]  = db[entity].filter(x => x.id !== id);
-  saveDB(db);
+  console.log('[Sinergia REA] Firebase activo como backend.');
 }
 
 /* ================================================================
@@ -443,14 +344,13 @@ function showAlertsPanel() {
  * Se llama al iniciar la app.
  */
 function checkMonthChange() {
-  const db           = getDB();
-  const currentMonth = new Date().getMonth();  // 0-11
+  const db           = getDB();  // viene de firebase-config.js → window.__DB_CACHE
+  const currentMonth = new Date().getMonth();
 
   if (db.meta.lastMonthCheck !== currentMonth) {
     db.meta.lastMonthCheck = currentMonth;
-    saveDB(db);
+    saveDB(db);  // guarda meta en localStorage
 
-    // Esperar un momento para que cargue la UI antes de mostrar el modal
     setTimeout(() => {
       Swal.fire({
         icon:              'info',
@@ -701,19 +601,15 @@ async function deleteClient(id) {
 
   if (!result.isConfirmed) return;
 
-  // Eliminar el cliente
-  dbDelete('clients', id);
-
-  // Eliminar registros relacionados en cascada
-  const db    = getDB();
-  db.tasks        = db.tasks.filter(t => t.clientId !== id);
-  db.absences     = db.absences.filter(a => a.clientId !== id);
-  db.appointments = db.appointments.filter(a => a.clientId !== id);
-  saveDB(db);
-
-  toast('Cliente eliminado', 'info');
-  renderClients();
-  populateAllClientFilters();
+  // Eliminar cliente + tareas/faltas/citas en cascada (batch Firebase)
+  try {
+    await deleteClientCascade(id);
+    toast('Cliente eliminado', 'info');
+    renderClients();
+    populateAllClientFilters();
+  } catch(e) {
+    // Error ya mostrado por deleteClientCascade
+  }
 }
 
 /* ================================================================
@@ -1780,5 +1676,5 @@ function init() {
   console.log('[Sinergia REA] Sistema listo.');
 }
 
-// Esperar a que el DOM esté completamente cargado
-document.addEventListener('DOMContentLoaded', init);
+// ⚡ init() es llamado por firebaseBootstrap() en firebase-config.js
+// No se llama aquí directamente — Firebase carga primero los datos.

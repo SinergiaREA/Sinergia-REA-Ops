@@ -473,11 +473,26 @@
 
 
   <!-- ============================================================
-    SCRIPT PRINCIPAL
-    Se carga al final del body para que el DOM esté listo.
-    Contiene toda la lógica del sistema.
+    SCRIPTS DEL SISTEMA
+    Orden de carga:
+      1. app.js        → lógica principal (define todas las funciones)
+      2. firebase-config.js → carga Firebase, inyecta dbGet/dbCreate/etc.
+                              llama a firebaseBootstrap() que llama a init()
   ============================================================ -->
+
+  <!-- 1. Lógica principal — DEBE cargar primero para que Firebase la llame -->
   <script src="app.js"></script>
+
+  <!-- 2. Firebase — carga datos y arranca la app -->
+  <script type="module">
+    import './firebase-config.js';
+    // firebaseBootstrap se llama automáticamente al cargar el módulo
+    document.addEventListener('DOMContentLoaded', () => {
+      if (typeof firebaseBootstrap === 'function') {
+        firebaseBootstrap();
+      }
+    });
+  </script>
 
 </body>
 </html>
