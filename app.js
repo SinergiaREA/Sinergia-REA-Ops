@@ -458,8 +458,24 @@ function handleAddClick() {
  * @param {Object} prefill - Cliente existente para editar (opcional)
  */
 async function addClient(prefill = {}) {
+  // Construir opciones de regímenes fiscales
+  const regOpts = (window.REGIMENES_SAT || []).map(r => {
+    const sel1 = (prefill.regimen1 === r.clave) ? 'selected' : '';
+    const sel2 = (prefill.regimen2 === r.clave) ? 'selected' : '';
+    const isPrincipal = r.clave === '626' || r.clave === '612';
+    const label = isPrincipal ? `⭐ ${r.clave} — ${r.nombre}` : `${r.clave} — ${r.nombre}`;
+    return `<option value="${r.clave}" ${sel1}>${label}</option>`;
+  }).join('');
+
+  // Construir opciones de giros
+  const giroOpts = (window.GIROS_EMPRESARIALES || []).map(g => {
+    const sel = (prefill.giroId === g.id) ? 'selected' : '';
+    return `<option value="${g.id}" data-iva="${g.iva}" ${sel}>${g.nombre} (IVA: ${g.iva})</option>`;
+  }).join('');
+
   const { value: form } = await Swal.fire({
     title: prefill.id ? '✏️ Editar Cliente' : '👤 Nuevo Cliente',
+    width: 600,
     html: `
       <div class="swal-form">
         <label>Nombre *</label>
@@ -481,54 +497,85 @@ async function addClient(prefill = {}) {
 
         <label>Estado</label>
         <select id="s-status">
-          <option value="active"   ${(prefill.status || 'active') === 'active'   ? 'selected' : ''}>Activo</option>
+          <option value="active"   ${(prefill.status || 'active') === 'active' ? 'selected' : ''}>Activo</option>
           <option value="inactive" ${prefill.status === 'inactive' ? 'selected' : ''}>Inactivo</option>
         </select>
+
+        <label>Régimen Fiscal Principal * (⭐ = más comunes)</label>
+        <select id="s-reg1">
+          <option value="">— Seleccionar régimen —</option>
+          ${regOpts}
+        </select>
+
+        <label>Segundo Régimen Fiscal (opcional)</label>
+        <select id="s-reg2">
+          <option value="">— Ninguno —</option>
+          ${regOpts}
+        </select>
+
+        <label>Giro Empresarial *</label>
+        <select id="s-giro" onchange="
+          const g = window.GIROS_EMPRESARIALES.find(x=>x.id===this.value);
+          document.getElementById('s-iva-display').textContent = g ? 'IVA: '+g.iva : '';
+        ">
+          <option value="">— Seleccionar giro —</option>
+          ${giroOpts}
+        </select>
+        <div id="s-iva-display" style="font-size:11px;color:#00e676;font-weight:700;margin-top:-4px;">
+          ${prefill.giroIva ? 'IVA: ' + prefill.giroIva : ''}
+        </div>
       </div>`,
     confirmButtonText: prefill.id ? 'Guardar cambios' : 'Crear cliente',
     showCancelButton:  true,
     cancelButtonText:  'Cancelar',
     preConfirm: () => {
       const name = document.getElementById('s-name').value.trim();
+      if (!name) { Swal.showValidationMessage('El nombre es obligatorio'); return false; }
 
-      // Validar nombre obligatorio
-      if (!name) {
-        Swal.showValidationMessage('El nombre del cliente es obligatorio');
-        return false;
-      }
-
-      // Validar que no exista otro cliente con el mismo nombre
       const clients = dbGet('clients');
-      const dup = clients.find(c =>
-        c.name.toLowerCase() === name.toLowerCase() && c.id !== prefill.id
-      );
-      if (dup) {
-        Swal.showValidationMessage('Ya existe un cliente con ese nombre');
-        return false;
-      }
+      const dup = clients.find(c => c.name.toLowerCase() === name.toLowerCase() && c.id !== prefill.id);
+      if (dup) { Swal.showValidationMessage('Ya existe un cliente con ese nombre'); return false; }
+
+      const reg1 = document.getElementById('s-reg1').value;
+      if (!reg1) { Swal.showValidationMessage('Selecciona al menos un régimen fiscal'); return false; }
+
+      const giroId = document.getElementById('s-giro').value;
+      if (!giroId) { Swal.showValidationMessage('Selecciona el giro empresarial'); return false; }
+
+      const reg2   = document.getElementById('s-reg2').value;
+      const giro   = window.GIROS_EMPRESARIALES.find(g => g.id === giroId);
+      const rObj1  = window.REGIMENES_SAT.find(r => r.clave === reg1);
+      const rObj2  = reg2 ? window.REGIMENES_SAT.find(r => r.clave === reg2) : null;
 
       return {
         name,
-        businessName: document.getElementById('s-biz').value.trim(),
-        phone:        document.getElementById('s-phone').value.trim(),
-        email:        document.getElementById('s-email').value.trim(),
-        status:       document.getElementById('s-status').value
+        businessName:  document.getElementById('s-biz').value.trim(),
+        phone:         document.getElementById('s-phone').value.trim(),
+        email:         document.getElementById('s-email').value.trim(),
+        status:        document.getElementById('s-status').value,
+        regimen1:      reg1,
+        regimen1Nombre: rObj1 ? rObj1.nombre : '',
+        regimen2:      reg2 || '',
+        regimen2Nombre: rObj2 ? rObj2.nombre : '',
+        giroId,
+        giroNombre:    giro ? giro.nombre : '',
+        giroIva:       giro ? giro.iva : ''
       };
     }
   });
 
-  if (!form) return;  // Usuario canceló
+  if (!form) return;
 
   if (prefill.id) {
-    dbUpdate('clients', prefill.id, form);
+    await dbUpdate('clients', prefill.id, form);
     toast('Cliente actualizado', 'success');
   } else {
-    dbCreate('clients', form);
+    await dbCreate('clients', form);
     toast('Cliente creado exitosamente', 'success');
   }
 
   renderClients();
-  populateAllClientFilters();  // Actualizar todos los selects de clientes
+  populateAllClientFilters();
 }
 
 /**
@@ -565,23 +612,36 @@ function renderClients() {
   }
 
   // Renderizar filas
-  tbody.innerHTML = clients.map(c => `
+  tbody.innerHTML = clients.map(c => {
+    const reg1 = c.regimen1 ? `<span class="badge badge-pending" style="font-size:10px;">${c.regimen1}</span>` : '<span style="color:var(--text-muted)">—</span>';
+    const reg2 = c.regimen2 ? `<span class="badge badge-progress" style="font-size:10px;margin-left:3px;">${c.regimen2}</span>` : '';
+    const ivaColor = c.giroIva === '0%' ? 'var(--green)' : c.giroIva === '16%' ? 'var(--blue)' : 'var(--brand-gold)';
+    const historial = c.updatedBy ? `<div style="font-size:10px;color:var(--text-muted);margin-top:2px;">✏️ ${c.updatedBy} · ${fmtDate(c.updatedAt)}</div>` : '';
+    return `
     <tr>
-      <td><strong>${c.name}</strong></td>
+      <td>
+        <strong>${c.name}</strong>
+        ${historial}
+      </td>
       <td>${c.businessName || '<span style="color:var(--text-muted)">—</span>'}</td>
-      <td>${c.phone        || '<span style="color:var(--text-muted)">—</span>'}</td>
-      <td><span class="badge ${c.status === 'active' ? 'badge-active' : 'badge-inactive'}">
-        ${c.status === 'active' ? '● Activo' : '○ Inactivo'}
-      </span></td>
-      <td>${fmtDate(c.createdAt)}</td>
+      <td>${c.phone || '<span style="color:var(--text-muted)">—</span>'}</td>
+      <td>
+        <div>${reg1}${reg2}</div>
+        ${c.regimen1Nombre ? `<div style="font-size:10px;color:var(--text-muted);margin-top:2px;">${c.regimen1Nombre.slice(0,35)}${c.regimen1Nombre.length>35?'…':''}</div>` : ''}
+      </td>
+      <td>
+        ${c.giroNombre ? `<div style="font-size:12px;font-weight:700;color:#fff;">${c.giroNombre}</div>` : '<span style="color:var(--text-muted)">—</span>'}
+        ${c.giroIva ? `<div style="font-size:10px;font-weight:800;color:${ivaColor};">IVA ${c.giroIva}</div>` : ''}
+      </td>
+      <td><span class="badge ${c.status === 'active' ? 'badge-active' : 'badge-inactive'}">${c.status === 'active' ? '● Activo' : '○ Inactivo'}</span></td>
       <td>
         <div style="display:flex;gap:6px;">
           <button class="btn-edit"   onclick='addClient(${JSON.stringify(c)})'>Editar</button>
           <button class="btn-danger" onclick="deleteClient('${c.id}')">Eliminar</button>
         </div>
       </td>
-    </tr>`
-  ).join('');
+    </tr>`;
+  }).join('');
 }
 
 /**
