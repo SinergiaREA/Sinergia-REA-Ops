@@ -66,6 +66,8 @@ window.REGIMENES_SAT = [
 /* ─── CATÁLOGO GIROS EMPRESARIALES ─── */
 window.GIROS_EMPRESARIALES = [
   { id:'taxista',       nombre:'TAXISTA',                  iva:'0%' },
+  { id:'asalariado',    nombre:'SUELDOS Y SALARIOS',       iva:'0%' },
+  { id:'pensionado',    nombre:'JUBILADOS',                iva:'0%' },
   { id:'herreria',      nombre:'HERRERÍA',                 iva:'16%' },
   { id:'purificadora',  nombre:'PURIFICADORA DE AGUA',     iva:'0%' },
   { id:'reciclaje',     nombre:'RECICLAJE (CARTÓN/METAL)', iva:'16%' },
