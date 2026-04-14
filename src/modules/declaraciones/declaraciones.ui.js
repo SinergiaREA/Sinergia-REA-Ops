@@ -1,12 +1,11 @@
 /* ================================================================
-   SINERGIA REA — declaraciones.ui.js
-   Responsabilidad: Renderizado de la vista "Declaraciones SAT".
-   SRP: Solo manipula el DOM de la vista de declaraciones.
-        No escribe en Firestore directamente (lo delega al service).
-
-   CAMBIO v2: Integra el catálogo estático del Excel como fallback.
-   Si Firestore no tiene clientes con regimenFiscal '626', se usan
-   los 25 clientes del Excel fusionados con los de Firestore.
+   SINERGIA REA — declaraciones.ui.js  v3
+   Cambios:
+     - Estado "BAJA" renombrado a "EN ESPERA"
+     - Tabla dividida: Pendientes arriba / Completos abajo (colapsable)
+     - Botón Activar/Inactivar cliente por despacho
+     - Botón "Agregar cliente RESICO" desde esta vista
+     - Resumen bar actualizado con nuevos estados
    ================================================================ */
 
 import { obtenerClientesPorRegimen } from '../clientes/clientes.service.js';
@@ -31,14 +30,28 @@ import {
 } from './clientes-resico.catalog.js';
 
 /* ── Estado local de la vista ── */
-let periodoActivo  = '';          // "2026-03"
-let subvistaActiva = 'resico';   // "resico" | "sueldos"
+let periodoActivo  = '';
+let subvistaActiva = 'resico';
 
-/* ── Caché en memoria para no recargar Firestore en cada checkbox ── */
-let mapaDeclaraciones = {};      // { clienteId: declaracionObj }
+/* ── Caché en memoria ── */
+let mapaDeclaraciones = {};
 
 /* ── Lista activa fusionada (Firestore + Excel) ── */
-let clientesActivos = [];        // se rellena en cargarSubvista
+let clientesActivos = [];
+
+/* ── Estado local de activación por cliente (persistido en localStorage) ── */
+function getEstadoClientes() {
+  try { return JSON.parse(localStorage.getItem('sinergia_estado_clientes') || '{}'); }
+  catch { return {}; }
+}
+function setEstadoCliente(id, status) {
+  const m = getEstadoClientes();
+  m[id] = status;
+  localStorage.setItem('sinergia_estado_clientes', JSON.stringify(m));
+}
+function getClienteStatus(id) {
+  return getEstadoClientes()[id] || 'active';
+}
 
 /* ================================================================
    PUNTO DE ENTRADA
@@ -86,9 +99,14 @@ function buildVistaHTML(periodos) {
           Control de avance por cliente y período · Régimen RESICO y Sueldos &amp; Salarios
         </div>
       </div>
-      <button class="btn-secondary" onclick="window.__decl_crearSiguientePeriodo()">
-        ＋ Nuevo periodo
-      </button>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <button class="btn-secondary" onclick="window.__decl_agregarClienteResico()" title="Agregar cliente RESICO">
+          ➕ Nuevo cliente RESICO
+        </button>
+        <button class="btn-secondary" onclick="window.__decl_crearSiguientePeriodo()">
+          📅 Nuevo periodo
+        </button>
+      </div>
     </div>
 
     <div class="decl-toolbar">
@@ -115,6 +133,12 @@ function buildVistaHTML(periodos) {
           onclick="window.__decl_cambiarTab('sueldos')">
           💼 Sueldos y Salarios (605)
         </button>
+        <button
+          id="tab-reportes"
+          class="decl-tab ${subvistaActiva === 'reportes' ? 'active' : ''}"
+          onclick="window.__decl_cambiarTab('reportes')">
+          📊 Completados & Inactivos
+        </button>
       </div>
     </div>
 
@@ -132,17 +156,18 @@ async function cargarSubvista(tipo) {
   if (!contenedor) return;
   contenedor.innerHTML = buildLoader('Cargando clientes...');
 
-  const claveSAT  = tipo === 'resico' ? '626' : '605';
-  const checksDef = tipo === 'resico' ? CHECKS_RESICO : CHECKS_SUELDOS;
+  // Si es la vista de reportes → mostrar completados e inactivos de ambos regímenes
+  if (tipo === 'reportes') {
+    await cargarReportes(contenedor);
+    return;
+  }
+
+  const claveSAT      = tipo === 'resico' ? '626' : '605';
+  const checksDef     = tipo === 'resico' ? CHECKS_RESICO : CHECKS_SUELDOS;
   const catalogoExcel = tipo === 'resico' ? CLIENTES_RESICO_EXCEL : CLIENTES_SUELDOS_EXCEL;
 
-  // 1. Clientes de Firestore con el régimen correcto
   const clientesFirestore = obtenerClientesPorRegimen(claveSAT);
-
-  // 2. Fusionar con el catálogo Excel (sin duplicar por RFC)
   clientesActivos = fusionarClientes(clientesFirestore, catalogoExcel);
-
-  // 3. Cargar declaraciones guardadas en Firestore para este periodo
   mapaDeclaraciones = await obtenerMapaDeclaraciones(periodoActivo, tipo);
 
   if (!clientesActivos.length) {
@@ -156,12 +181,13 @@ async function cargarSubvista(tipo) {
     return;
   }
 
-  // 4. Construir filas calculando estado por cliente
+  // Calcular estado de cada cliente (incluyendo estado activo/inactivo del despacho)
   const filas = clientesActivos.map(c => {
-    const decl   = mapaDeclaraciones[c.id] || {};
-    const checks = decl.checks || {};
-    const { estado, porcentaje } = calcularEstado(checks, checksDef);
-    return { cliente: c, checks, estado, porcentaje };
+    const decl         = mapaDeclaraciones[c.id] || {};
+    const checks       = decl.checks || {};
+    const clientStatus = getClienteStatus(c.id);
+    const { estado, porcentaje } = calcularEstado(checks, checksDef, clientStatus);
+    return { cliente: c, checks, estado, porcentaje, clientStatus };
   });
 
   contenedor.innerHTML = buildTablaHTML(filas, checksDef, tipo);
@@ -169,95 +195,313 @@ async function cargarSubvista(tipo) {
 }
 
 /* ================================================================
-   TABLA HTML
+   TABLA HTML — con sección Completos separada
    ================================================================ */
 
 function buildTablaHTML(filas, checksDef, tipo) {
+  // Separar por grupo
+  const pendientes = filas.filter(f => f.estado !== 'COMPLETO' && f.estado !== 'INACTIVO');
+  const completos  = filas.filter(f => f.estado === 'COMPLETO');
+  const inactivos  = filas.filter(f => f.estado === 'INACTIVO');
+
   const thChecks = checksDef.map(c =>
     `<th style="text-align:center;min-width:90px">${c.label}</th>`
   ).join('');
 
-  const trRows = filas.map(({ cliente, checks, estado, porcentaje }) => {
-    const meta     = estadoMeta(estado);
-    const barColor = colorProgreso(porcentaje);
+  function buildRows(lista) {
+    return lista.map(({ cliente, checks, estado, porcentaje, clientStatus }) => {
+      const meta     = estadoMeta(estado);
+      const barColor = colorProgreso(porcentaje);
+      const isInactive = clientStatus === 'inactive';
 
-    const tdChecks = checksDef.map(c => `
-      <td style="text-align:center;">
-        <input
-          type="checkbox"
-          class="decl-check"
-          data-cliente="${cliente.id}"
-          data-check="${c.key}"
-          data-tipo="${tipo}"
-          ${checks[c.key] ? 'checked' : ''}
-          onchange="window.__decl_onCheck(this)"
-          title="${c.label}">
-      </td>`
-    ).join('');
+      const tdChecks = checksDef.map(c => `
+        <td style="text-align:center;">
+          <input
+            type="checkbox"
+            class="decl-check"
+            data-cliente="${cliente.id}"
+            data-check="${c.key}"
+            data-tipo="${tipo}"
+            ${checks[c.key] ? 'checked' : ''}
+            ${isInactive ? 'disabled' : ''}
+            onchange="window.__decl_onCheck(this)"
+            title="${c.label}">`
+      + `</td>`).join('');
 
-    // Indicador de fuente: "EXCEL" badge si viene del catálogo
-    const fuenteBadge = cliente.fuente === 'excel'
-      ? `<span style="
-           font-size:9px;font-weight:700;letter-spacing:.5px;
-           background:rgba(99,102,241,0.15);color:#6366f1;
-           padding:1px 5px;border-radius:3px;margin-left:4px;
-           vertical-align:middle">EXCEL</span>`
-      : '';
+      const fuenteBadge = cliente.fuente === 'excel'
+        ? `<span style="
+             font-size:9px;font-weight:700;letter-spacing:.5px;
+             background:rgba(99,102,241,0.15);color:#6366f1;
+             padding:1px 5px;border-radius:3px;margin-left:4px;
+             vertical-align:middle">EXCEL</span>`
+        : '';
 
-    // RFC subtítulo
-    const rfcLine = cliente.rfc
-      ? `<div style="font-size:10px;color:var(--text-muted);letter-spacing:.3px">${cliente.rfc}</div>`
-      : '';
+      const rfcLine = cliente.rfc
+        ? `<div style="font-size:10px;color:var(--text-muted);letter-spacing:.3px">${cliente.rfc}</div>`
+        : '';
 
-    // Giro subtítulo
-    const giroLine = cliente.giro
-      ? `<div style="font-size:10px;color:var(--text-muted)">${cliente.giro}</div>`
-      : '';
+      const giroLine = cliente.giro
+        ? `<div style="font-size:10px;color:var(--text-muted)">${cliente.giro}</div>`
+        : '';
 
-    return `
-      <tr id="decl-row-${cliente.id}" style="${estado === 'BAJA' ? 'opacity:.6' : ''}">
-        <td>
-          <div style="font-weight:600;font-size:13px">
-            ${cliente.name || cliente.nombre}${fuenteBadge}
-          </div>
-          ${rfcLine}
-          ${giroLine}
-        </td>
-        ${tdChecks}
-        <td style="min-width:140px">
-          <div style="display:flex;align-items:center;gap:8px;">
-            <div style="flex:1;height:6px;background:rgba(26,35,126,0.1);border-radius:3px;overflow:hidden;">
-              <div class="decl-progress-fill"
-                style="width:${porcentaje}%;height:100%;background:${barColor};border-radius:3px;transition:width .3s;"></div>
+      // Botón activar/inactivar
+      const toggleBtn = isInactive
+        ? `<button onclick="window.__decl_toggleCliente('${cliente.id}', 'active')" title="Activar cliente" style="
+             background:rgba(22,163,74,0.15);color:#16a34a;border:none;
+             border-radius:6px;padding:3px 8px;font-size:11px;cursor:pointer;margin-left:6px">
+             ✅ Activar</button>`
+        : `<button onclick="window.__decl_toggleCliente('${cliente.id}', 'inactive')" title="Marcar inactivo / se fue del despacho" style="
+             background:rgba(107,114,128,0.12);color:#6b7280;border:none;
+             border-radius:6px;padding:3px 8px;font-size:11px;cursor:pointer;margin-left:6px">
+             🔴 Inactivar</button>`;
+
+      return `
+        <tr id="decl-row-${cliente.id}" style="${isInactive ? 'opacity:.5' : ''}">
+          <td>
+            <div style="font-weight:600;font-size:13px;display:flex;align-items:center;flex-wrap:wrap;gap:2px;">
+              ${cliente.name || cliente.nombre}${fuenteBadge}
+              ${toggleBtn}
             </div>
-            <span style="font-size:11px;font-weight:700;color:${barColor};min-width:30px">${porcentaje}%</span>
-          </div>
-        </td>
-        <td>
-          <span class="decl-badge-estado" style="
-            display:inline-flex;align-items:center;gap:4px;
-            padding:3px 10px;border-radius:999px;font-size:11px;font-weight:700;
-            background:${meta.bg};color:${meta.color};">
-            ${meta.icon} ${estado}
-          </span>
-        </td>
-      </tr>`;
-  }).join('');
+            ${rfcLine}
+            ${giroLine}
+          </td>
+          ${tdChecks}
+          <td style="min-width:140px">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <div style="flex:1;height:6px;background:rgba(26,35,126,0.1);border-radius:3px;overflow:hidden;">
+                <div class="decl-progress-fill"
+                  style="width:${porcentaje}%;height:100%;background:${barColor};border-radius:3px;transition:width .3s;"></div>
+              </div>
+              <span class="decl-pct-text" style="font-size:11px;font-weight:700;color:${barColor};min-width:30px">${porcentaje}%</span>
+            </div>
+          </td>
+          <td>
+            <span class="decl-badge-estado" style="
+              display:inline-flex;align-items:center;gap:4px;
+              padding:3px 10px;border-radius:999px;font-size:11px;font-weight:700;
+              background:${meta.bg};color:${meta.color};">
+              ${meta.icon} ${estado}
+            </span>
+          </td>
+        </tr>`;
+    }).join('');
+  }
 
-  return `
-    <div class="table-wrap">
-      <table class="data-table">
+  const tableHead = `
+    <thead>
+      <tr>
+        <th>Cliente</th>
+        ${thChecks}
+        <th style="min-width:160px">Avance</th>
+        <th>Estado</th>
+      </tr>
+    </thead>`;
+
+  // Sección Pendientes
+  let pendientesHTML = '';
+  if (pendientes.length) {
+    pendientesHTML = `
+      <div style="margin-bottom:8px;font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;padding:4px 0">
+        📋 Pendientes (${pendientes.length})
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          ${tableHead}
+          <tbody>${buildRows(pendientes)}</tbody>
+        </table>
+      </div>`;
+  }
+
+  if (!pendientes.length) {
+    // Si no hay pendientes, mostrar mensaje
+    pendientesHTML = `
+      <div class="empty-state">
+        <div class="empty-icon">✅</div>
+        <div class="empty-title">¡Sin pendientes!</div>
+        <div class="empty-sub">Ve a la pestaña "Completados & Inactivos" para ver el histórico.</div>
+      </div>`;
+  }
+
+  // Solo retornar pendientes (completos e inactivos están en la pestaña de Reportes)
+  return pendientesHTML;
+}
+
+/* ================================================================
+   VISTA DE REPORTES — Completados e Inactivos (ambos regímenes)
+   ================================================================ */
+
+async function cargarReportes(contenedor) {
+  try {
+    // Loaded ambos regímenes y sus declaraciones
+    const clientesResico  = obtenerClientesPorRegimen('626');
+    const clientesSueldos = obtenerClientesPorRegimen('605');
+    
+    const mapaRESICO  = await obtenerMapaDeclaraciones(periodoActivo, 'resico');
+    const mapaSUELDOS = await obtenerMapaDeclaraciones(periodoActivo, 'sueldos');
+
+    // Fusionar con catálogos Excel
+    const actResico  = fusionarClientes(clientesResico, CLIENTES_RESICO_EXCEL);
+    const actSueldos = fusionarClientes(clientesSueldos, CLIENTES_SUELDOS_EXCEL);
+
+    // Combinar completados e inactivos
+    const completados = [];
+    const inactivos   = [];
+
+    function procesarClientes(clientes, mapa, checksDef, tipo) {
+      clientes.forEach(c => {
+        const decl       = mapa[c.id] || {};
+        const checks     = decl.checks || {};
+        const clientStatus = getClienteStatus(c.id);
+        const { estado, porcentaje } = calcularEstado(checks, checksDef, clientStatus);
+        
+        if (estado === 'COMPLETO') {
+          completados.push({ cliente: c, checks, estado, porcentaje, clientStatus, tipo });
+        } else if (estado === 'INACTIVO') {
+          inactivos.push({ cliente: c, checks, estado, porcentaje, clientStatus, tipo });
+        }
+      });
+    }
+
+    procesarClientes(actResico, mapaRESICO, CHECKS_RESICO, 'resico');
+    procesarClientes(actSueldos, mapaSUELDOS, CHECKS_SUELDOS, 'sueldos');
+
+    // Ordenar por nombre
+    completados.sort((a, b) => (a.cliente.name || a.cliente.nombre).localeCompare(b.cliente.name || b.cliente.nombre));
+    inactivos.sort((a, b) => (a.cliente.name || a.cliente.nombre).localeCompare(b.cliente.name || b.cliente.nombre));
+
+    // Construir HTML
+    let html = '';
+
+    // Sección COMPLETOS
+    if (completados.length) {
+      const tableHead = `
         <thead>
           <tr>
             <th>Cliente</th>
-            ${thChecks}
+            <th>Régimen</th>
             <th style="min-width:160px">Avance</th>
             <th>Estado</th>
           </tr>
-        </thead>
-        <tbody>${trRows}</tbody>
-      </table>
-    </div>`;
+        </thead>`;
+
+      const tbody = completados.map(({ cliente, estado, porcentaje, tipo }) => {
+        const meta     = estadoMeta(estado);
+        const barColor = colorProgreso(porcentaje);
+        const rfcLine  = cliente.rfc ? `<div style="font-size:10px;color:var(--text-muted);letter-spacing:.3px">${cliente.rfc}</div>` : '';
+        const regimen  = tipo === 'resico' ? '🏛️ RESICO (626)' : '💼 Sueldos (605)';
+
+        return `
+          <tr>
+            <td>
+              <div style="font-weight:600;font-size:13px">${cliente.name || cliente.nombre}</div>
+              ${rfcLine}
+            </td>
+            <td style="font-size:11px;color:var(--text-muted)">${regimen}</td>
+            <td style="min-width:140px">
+              <div style="display:flex;align-items:center;gap:8px;">
+                <div style="flex:1;height:6px;background:rgba(26,35,126,0.1);border-radius:3px;overflow:hidden;">
+                  <div style="width:${porcentaje}%;height:100%;background:${barColor};border-radius:3px;"></div>
+                </div>
+                <span style="font-size:11px;font-weight:700;color:${barColor};min-width:30px">${porcentaje}%</span>
+              </div>
+            </td>
+            <td>
+              <span class="decl-badge-estado" style="
+                display:inline-flex;align-items:center;gap:4px;
+                padding:3px 10px;border-radius:999px;font-size:11px;font-weight:700;
+                background:${meta.bg};color:${meta.color};">
+                ${meta.icon} ${estado}
+              </span>
+            </td>
+          </tr>`;
+      }).join('');
+
+      html += `
+        <div style="margin-bottom:16px">
+          <div style="margin-bottom:8px;font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;padding:4px 0">
+            ✅ Completados (${completados.length})
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">${tableHead}<tbody>${tbody}</tbody></table>
+          </div>
+        </div>`;
+    }
+
+    // Sección INACTIVOS
+    if (inactivos.length) {
+      const tableHead = `
+        <thead>
+          <tr>
+            <th>Cliente</th>
+            <th>Régimen</th>
+            <th>Acción</th>
+            <th>Estado</th>
+          </tr>
+        </thead>`;
+
+      const tbody = inactivos.map(({ cliente, estado, tipo }) => {
+        const meta     = estadoMeta(estado);
+        const rfcLine  = cliente.rfc ? `<div style="font-size:10px;color:var(--text-muted);letter-spacing:.3px">${cliente.rfc}</div>` : '';
+        const regimen  = tipo === 'resico' ? '🏛️ RESICO (626)' : '💼 Sueldos (605)';
+
+        return `
+          <tr style="opacity:.6">
+            <td>
+              <div style="font-weight:600;font-size:13px">${cliente.name || cliente.nombre}</div>
+              ${rfcLine}
+            </td>
+            <td style="font-size:11px;color:var(--text-muted)">${regimen}</td>
+            <td>
+              <button onclick="window.__decl_toggleCliente('${cliente.id}', 'active')" title="Reactivar en despacho" style="
+                background:rgba(22,163,74,0.15);color:#16a34a;border:none;
+                border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer;font-weight:700">
+                ✅ Reactivar</button>
+            </td>
+            <td>
+              <span class="decl-badge-estado" style="
+                display:inline-flex;align-items:center;gap:4px;
+                padding:3px 10px;border-radius:999px;font-size:11px;font-weight:700;
+                background:${meta.bg};color:${meta.color};">
+                ${meta.icon} ${estado}
+              </span>
+            </td>
+          </tr>`;
+      }).join('');
+
+      html += `
+        <div>
+          <div style="margin-bottom:8px;font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;padding:4px 0">
+            🔴 Inactivos (${inactivos.length})
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">${tableHead}<tbody>${tbody}</tbody></table>
+          </div>
+        </div>`;
+    }
+
+    if (!completados.length && !inactivos.length) {
+      html = `
+        <div class="empty-state">
+          <div class="empty-icon">📭</div>
+          <div class="empty-title">No hay registros</div>
+          <div class="empty-sub">Todos los clientes tienen declaraciones pendientes.</div>
+        </div>`;
+    }
+
+    contenedor.innerHTML = html;
+    // Ocultar resumen bar en reportes
+    const resumenEl = document.getElementById('decl-resumen-bar');
+    if (resumenEl) resumenEl.innerHTML = '';
+
+  } catch (err) {
+    console.error('[declaraciones.ui] Error en reportes:', err);
+    contenedor.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon">⚠️</div>
+        <div class="empty-title">Error al cargar reportes</div>
+        <div class="empty-sub">${err.message}</div>
+      </div>`;
+  }
 }
 
 /* ================================================================
@@ -271,9 +515,10 @@ function renderResumenBar(filas, checksDef) {
 
   const total      = filas.length;
   const completos  = filas.filter(f => f.estado === 'COMPLETO').length;
-  const bajas      = filas.filter(f => f.estado === 'BAJA').length;
-  const pendientes = total - completos - bajas;
-  const pctGlobal  = Math.round((completos / total) * 100);
+  const inactivos  = filas.filter(f => f.estado === 'INACTIVO').length;
+  const pendientes = total - completos - inactivos;
+  const activos    = total - inactivos;
+  const pctGlobal  = activos > 0 ? Math.round((completos / activos) * 100) : 0;
 
   el.innerHTML = `
     <div class="decl-resumen-bar">
@@ -288,8 +533,8 @@ function renderResumenBar(filas, checksDef) {
       </div>
       <div class="decl-divider"></div>
       <div class="decl-resumen-stat">
-        <span style="color:#6b7280;font-size:18px;font-weight:800">${bajas}</span>
-        <span style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px">En espera</span>
+        <span style="color:#6b7280;font-size:18px;font-weight:800">${inactivos}</span>
+        <span style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px">Inactivos</span>
       </div>
       <div class="decl-divider"></div>
       <div class="decl-resumen-stat" style="flex-direction:row;gap:10px;align-items:center;">
@@ -310,16 +555,22 @@ window.__decl_onCheck = async function(el) {
   const checkKey  = el.dataset.check;
   const tipo      = el.dataset.tipo;
   const checksDef = tipo === 'resico' ? CHECKS_RESICO : CHECKS_SUELDOS;
+  const cliente   = clientesActivos.find(c => c.id === clienteId);
+  const nombreCliente = cliente ? (cliente.name || cliente.nombre) : clienteId;
 
   if (!mapaDeclaraciones[clienteId])        mapaDeclaraciones[clienteId] = { checks: {} };
   if (!mapaDeclaraciones[clienteId].checks) mapaDeclaraciones[clienteId].checks = {};
+  
+  const estadoAnterior = mapaDeclaraciones[clienteId].checks ? 
+    Object.values(mapaDeclaraciones[clienteId].checks).filter(Boolean).length : 0;
+  
   mapaDeclaraciones[clienteId].checks[checkKey] = el.checked;
 
   const checks = mapaDeclaraciones[clienteId].checks;
-  const { estado, porcentaje } = calcularEstado(checks, checksDef);
+  const clientStatus = getClienteStatus(clienteId);
+  const { estado, porcentaje } = calcularEstado(checks, checksDef, clientStatus);
 
-  // Guardar en Firestore (no bloqueante)
-  guardarDeclaracion({
+  await guardarDeclaracion({
     clienteId, periodo: periodoActivo, tipo, checks, estado, porcentaje
   }).catch(err => {
     console.error('[declaraciones.ui] Error al guardar:', err);
@@ -328,17 +579,121 @@ window.__decl_onCheck = async function(el) {
     window.toast && window.toast('Error al guardar. Intenta de nuevo.', 'error');
   });
 
-  // Actualizar DOM inmediatamente
-  actualizarFilaDOM(clienteId, checks, estado, porcentaje, checksDef);
+  // Si quedó COMPLETO → mostrar alert y recargar tabla
+  if (estado === 'COMPLETO') {
+    // Mostrar alert sin bloquear (en background)
+    Swal.fire({
+      title: '✅ ¡Declaración Completada!',
+      html: `<b>${nombreCliente}</b> ha sido marcado como completado.`,
+      icon: 'success',
+      timer: 7000,
+      timerProgressBar: true,
+      showConfirmButton: false,
+      position: 'bottom-right',
+      toast: true
+    });
+    // Recargar tabla para mostrar completos e inactivos
+    await cargarSubvista(tipo);
+  } else {
+    // Recarga también si desmarca (para mover de completo a pendiente)
+    if (!el.checked) {
+      await cargarSubvista(tipo);
+    } else {
+      // Actualización liviana: solo la fila y resumen
+      actualizarFilaDOM(clienteId, checks, estado, porcentaje, checksDef);
+      const filas = clientesActivos.map(c => {
+        const d  = mapaDeclaraciones[c.id] || {};
+        const ch = d.checks || {};
+        const cs = getClienteStatus(c.id);
+        const { estado: est, porcentaje: pct } = calcularEstado(ch, checksDef, cs);
+        return { estado: est, porcentaje: pct };
+      });
+      renderResumenBar(filas, checksDef);
+    }
+  }
+};
 
-  // Refrescar barra de resumen usando clientesActivos (ya incluye Excel)
-  const filas = clientesActivos.map(c => {
-    const d  = mapaDeclaraciones[c.id] || {};
-    const ch = d.checks || {};
-    const { estado: est, porcentaje: pct } = calcularEstado(ch, checksDef);
-    return { estado: est, porcentaje: pct };
+/* ── Activar / Inactivar cliente en despacho ── */
+window.__decl_toggleCliente = async function(clienteId, nuevoStatus) {
+  const cliente = clientesActivos.find(c => c.id === clienteId);
+  const nombre  = cliente ? (cliente.name || cliente.nombre) : clienteId;
+  const msg = nuevoStatus === 'inactive'
+    ? `¿Marcar a <b>${nombre}</b> como inactivo? (se fue del despacho)`
+    : `¿Reactivar a <b>${nombre}</b> en el despacho?`;
+
+  const r = await Swal.fire({
+    title: nuevoStatus === 'inactive' ? '🔴 Inactivar cliente' : '✅ Reactivar cliente',
+    html: msg,
+    icon: 'question',
+    showCancelButton: true,
+    confirmButtonText: nuevoStatus === 'inactive' ? 'Sí, inactivar' : 'Sí, reactivar',
+    cancelButtonText: 'Cancelar'
   });
-  renderResumenBar(filas, checksDef);
+  if (!r.isConfirmed) return;
+
+  setEstadoCliente(clienteId, nuevoStatus);
+  window.toast && window.toast(
+    nuevoStatus === 'inactive' ? `${nombre} marcado como inactivo` : `${nombre} reactivado`,
+    nuevoStatus === 'inactive' ? 'info' : 'success'
+  );
+  await cargarSubvista(subvistaActiva);
+};
+
+/* ── Agregar cliente RESICO nuevo ── */
+window.__decl_agregarClienteResico = async function() {
+  const { value: form } = await Swal.fire({
+    title: '➕ Nuevo Cliente RESICO',
+    html: `
+      <div class="swal-form" style="text-align:left">
+        <label>Nombre completo *</label>
+        <input id="nr-name" placeholder="Nombre del contribuyente" style="width:100%;padding:8px;margin-bottom:8px;border-radius:6px;border:1px solid #ccc">
+        <label>RFC *</label>
+        <input id="nr-rfc" placeholder="Ej: RECJ7903097T9" style="width:100%;padding:8px;margin-bottom:8px;border-radius:6px;border:1px solid #ccc;text-transform:uppercase">
+        <label>Giro / Actividad</label>
+        <input id="nr-giro" placeholder="Ej: TAXISTA 0%, ABARROTES 16%" style="width:100%;padding:8px;margin-bottom:8px;border-radius:6px;border:1px solid #ccc">
+        <label>Teléfono</label>
+        <input id="nr-phone" placeholder="55 0000 0000" style="width:100%;padding:8px;border-radius:6px;border:1px solid #ccc">
+      </div>`,
+    confirmButtonText: 'Agregar cliente',
+    showCancelButton: true,
+    cancelButtonText: 'Cancelar',
+    width: 480,
+    preConfirm: () => {
+      const name  = document.getElementById('nr-name')?.value.trim();
+      const rfc   = document.getElementById('nr-rfc')?.value.trim().toUpperCase();
+      const giro  = document.getElementById('nr-giro')?.value.trim();
+      const phone = document.getElementById('nr-phone')?.value.trim();
+      if (!name) { Swal.showValidationMessage('El nombre es obligatorio'); return false; }
+      if (!rfc)  { Swal.showValidationMessage('El RFC es obligatorio');    return false; }
+      // Verificar duplicado RFC
+      const dup = clientesActivos.find(c => c.rfc === rfc);
+      if (dup) { Swal.showValidationMessage(`Ya existe un cliente con RFC ${rfc}`); return false; }
+      return { name, rfc, giro, phone };
+    }
+  });
+  if (!form) return;
+
+  // Intentar crear en Firestore si está disponible
+  try {
+    if (typeof window.crearCliente === 'function') {
+      await window.crearCliente({
+        name: form.name, rfc: form.rfc, giro: form.giro, phone: form.phone,
+        regimenFiscal: '626', status: 'active'
+      });
+    } else {
+      // Fallback: agregar al catálogo local en memoria
+      const nuevoId = `local_${form.rfc}`;
+      CLIENTES_RESICO_EXCEL.push({
+        id: nuevoId, name: form.name, rfc: form.rfc, giro: form.giro,
+        phone: form.phone, regimenFiscal: '626', fuente: 'local', baja: false
+      });
+    }
+    window.toast && window.toast(`Cliente ${form.name} agregado`, 'success');
+    await cargarSubvista(subvistaActiva);
+  } catch (err) {
+    console.error('[declaraciones.ui] Error al crear cliente:', err);
+    Swal.fire('Error', 'No se pudo guardar el cliente. ' + err.message, 'error');
+  }
 };
 
 function actualizarFilaDOM(clienteId, checks, estado, porcentaje, checksDef) {
@@ -348,18 +703,26 @@ function actualizarFilaDOM(clienteId, checks, estado, porcentaje, checksDef) {
   const meta     = estadoMeta(estado);
   const barColor = colorProgreso(porcentaje);
 
+  // Actualizar barra de progreso
   const fill = row.querySelector('.decl-progress-fill');
   if (fill) { fill.style.width = `${porcentaje}%`; fill.style.background = barColor; }
 
+  // Actualizar el span del porcentaje
+  const pctSpan = row.querySelector('.decl-pct-text');
+  if (pctSpan) {
+    pctSpan.textContent = `${porcentaje}%`;
+    pctSpan.style.color = barColor;
+  }
+
+  // Actualizar badge de estado
   const badge = row.querySelector('.decl-badge-estado');
   if (badge) {
-    badge.textContent      = `${meta.icon} ${estado}`;
+    badge.innerHTML     = `${meta.icon} ${estado}`;
     badge.style.color      = meta.color;
     badge.style.background = meta.bg;
   }
 
-  // Opacidad si pasa a BAJA
-  row.style.opacity = estado === 'BAJA' ? '0.6' : '1';
+  row.style.opacity = estado === 'INACTIVO' ? '0.5' : '1';
 }
 
 window.__decl_cambiarPeriodo = async function(nuevoPeriodo) {
