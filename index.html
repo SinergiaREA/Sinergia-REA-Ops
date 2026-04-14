@@ -39,6 +39,9 @@
   <!-- Estilos del sistema -->
   <link rel="stylesheet" href="styles.css">
 
+  <!-- Estilos del módulo de Declaraciones SAT (no afecta estilos existentes) -->
+  <link rel="stylesheet" href="src/styles/declaraciones.css">
+
 </head>
 <body>
 
@@ -96,6 +99,13 @@
       </div>
 
       <div class="nav-section">Reportes</div>
+
+      <!-- ── NUEVO: Módulo Declaraciones SAT ── -->
+      <!-- Este nav item fue agregado como parte del módulo declaraciones -->
+      <!-- No modifica los nav items existentes -->
+      <div class="nav-item" onclick="navigate('declaraciones')">
+        <span class="icon">🏛️</span> Declaraciones SAT
+      </div>
 
       <!-- Módulo Reporte Mensual -->
       <div class="nav-item" onclick="navigate('reports')">
@@ -444,6 +454,21 @@
 
 
       <!-- ========================================================
+        VISTA: DECLARACIONES SAT  ← NUEVA (no modifica vistas existentes)
+        Control de avance RESICO (626) y Sueldos y Salarios (605).
+        El contenido se inyecta completamente desde declaraciones.ui.js
+        ID: view-declaraciones
+      ======================================================== -->
+      <div class="view" id="view-declaraciones">
+        <!-- declaraciones.ui.js → initDeclaracionesView() inyecta aquí -->
+        <div class="empty-state" style="padding:60px">
+          <div class="empty-icon">🏛️</div>
+          <div class="empty-title">Cargando módulo de declaraciones...</div>
+        </div>
+      </div><!-- /view-declaraciones -->
+
+
+      <!-- ========================================================
         VISTA: REPORTE MENSUAL
         Resumen de faltas e incidencias del mes actual.
         Con opción de exportar backup JSON.
@@ -496,6 +521,37 @@
     } else {
       window.addEventListener('load', () => firebaseBootstrap?.());
     }
+  </script>
+
+  <!--
+    3. Módulo Declaraciones SAT  ← NUEVO
+    Se carga como módulo ES6 independiente.
+    Registra window.__initDeclaracionesView para que app.js lo invoque.
+    No interfiere con ningún código existente.
+  -->
+  <script type="module">
+    import { initDeclaracionesView }
+      from './src/modules/declaraciones/declaraciones.ui.js';
+
+    // Exponemos la función en window para que app.js (script clásico)
+    // pueda llamarla desde navigate('declaraciones')
+    window.__initDeclaracionesView = initDeclaracionesView;
+  </script>
+
+  <!--
+    4. Módulo Clientes extendido  ← NUEVO
+    Activa el formulario con campos SAT (régimen fiscal + giro).
+    Reemplaza addClient() y deleteClient() de app.js en memoria.
+    app.js en disco NO se modifica — solo se parchea en runtime.
+    Se carga después de app.js para que la sobreescritura sea segura.
+  -->
+  <script type="module">
+    import { patchClientesFunctions }
+      from './src/modules/clientes/clientes.ui.js';
+
+    // Esperamos a que app.js haya definido sus funciones
+    // (los módulos ES6 son siempre diferidos, app.js ya corrió)
+    patchClientesFunctions();
   </script>
 
 </body>

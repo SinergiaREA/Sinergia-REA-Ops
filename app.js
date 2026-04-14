@@ -371,12 +371,13 @@ let currentView = 'dashboard';
 
 /** Títulos para el topbar por vista */
 const viewTitles = {
-  dashboard:    'Dashboard',
-  clients:      'Clientes',
-  tasks:        'Tareas Contables',
-  absences:     'Registro de Faltas',
-  appointments: 'Agenda de Citas',
-  reports:      'Reporte Mensual'
+  dashboard:      'Dashboard',
+  clients:        'Clientes',
+  tasks:          'Tareas Contables',
+  absences:       'Registro de Faltas',
+  appointments:   'Agenda de Citas',
+  reports:        'Reporte Mensual',
+  declaraciones:  'Declaraciones Mensuales SAT'   // ← NUEVO (no toca las demás entradas)
 };
 
 /**
@@ -410,7 +411,19 @@ function navigate(view) {
     tasks:        () => { populateTaskFilters(); renderTasks(); },
     absences:     () => { populateAbsenceFilters(); renderAbsences(); },
     appointments: () => { populateApptFilters(); renderAppointments(); },
-    reports:      renderReports
+    reports:      renderReports,
+    // ── NUEVO: módulo declaraciones ──────────────────────────────────────
+    // window.__initDeclaracionesView es inyectado por el <script type="module">
+    // en index.html. Si aún no cargó (race condition), silencia el error.
+    declaraciones: () => {
+      if (typeof window.__initDeclaracionesView === 'function') {
+        window.__initDeclaracionesView();
+      } else {
+        // El módulo ES6 aún no terminó de cargar; reintenta tras 300ms
+        setTimeout(() => window.__initDeclaracionesView?.(), 300);
+      }
+    }
+    // ────────────────────────────────────────────────────────────────────
   };
 
   if (renderMap[view]) renderMap[view]();
@@ -437,12 +450,13 @@ function closeSidebar() {
  */
 function handleAddClick() {
   const actions = {
-    dashboard:    addTask,
-    clients:      addClient,
-    tasks:        addTask,
-    absences:     addAbsence,
-    appointments: addAppointment,
-    reports:      exportData
+    dashboard:      addTask,
+    clients:        addClient,
+    tasks:          addTask,
+    absences:       addAbsence,
+    appointments:   addAppointment,
+    reports:        exportData,
+    declaraciones:  window.__decl_crearSiguientePeriodo   // ← NUEVO
   };
   (actions[currentView] || addTask)();
 }
@@ -1704,7 +1718,9 @@ function init() {
 
   // 5. Asignar data-view a nav items para el navigate()
   const navItems = document.querySelectorAll('.nav-item');
-  const views = ['dashboard', 'clients', 'tasks', 'absences', 'appointments', 'reports'];
+  // IMPORTANTE: el orden debe coincidir exactamente con el orden
+  // de los .nav-item en index.html (incluyendo el nuevo "declaraciones")
+  const views = ['dashboard', 'clients', 'tasks', 'absences', 'appointments', 'declaraciones', 'reports'];
   navItems.forEach((el, i) => {
     if (views[i]) el.dataset.view = views[i];
   });

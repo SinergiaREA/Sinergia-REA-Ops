@@ -27,8 +27,8 @@ const db   = getFirestore(app);
 const auth = getAuth(app);
 
 // ── Exponer la instancia de Firestore para módulos ES6 externos ──
-// Los módulos en /src (declaraciones.service.js, etc.) la acceden
-// via window.__firebaseDb sin necesidad de re-inicializar Firebase.
+// declaraciones.service.js necesita acceder a Firestore sin re-inicializar.
+// Esto evita el error "Firebase App named '[DEFAULT]' already exists".
 window.__firebaseDb = db;
 
 /* Usuarios autorizados — emails creados en Firebase Auth Console */
@@ -72,8 +72,6 @@ window.REGIMENES_SAT = [
 window.GIROS_EMPRESARIALES = [
   { id:'taxista',       nombre:'TAXISTA',                  iva:'0%' },
   { id:'herreria',      nombre:'HERRERÍA',                 iva:'16%' },
-  { id:'asalariado',    nombre:'SUELDOS Y SALARIOS',       iva:'0%' },
-  { id:'pensionado',    nombre:'JUBILADOS',                iva:'0%' },
   { id:'purificadora',  nombre:'PURIFICADORA DE AGUA',     iva:'0%' },
   { id:'reciclaje',     nombre:'RECICLAJE (CARTÓN/METAL)', iva:'16%' },
   { id:'vivero',        nombre:'VIVERO DE PLANTAS',        iva:'0%' },
