@@ -350,22 +350,224 @@ body {
 .sound-text { font-size:13px; font-weight:800; color:#fff; line-height:1.4; }
 .sound-sub  { font-size:10.5px; color:var(--text-muted); font-weight:600; margin-top:2px; }
 
-/* RESPONSIVE */
-@media (max-width:768px) {
-  .sidebar { transform:translateX(-100%); }
-  .sidebar.open { transform:translateX(0); }
-  .overlay.open { display:block; }
-  .main { margin-left:0; }
-  .menu-toggle { display:flex; }
-  .kanban-board { grid-template-columns:1fr; }
+/* RESPONSIVE — Breakpoints completos */
+
+/* ── Tablet grande (iPad) 840-1199px ── */
+@media (max-width:1199px) and (min-width:840px) {
+  .sidebar { width:200px; }
+  .main { margin-left:200px; }
   .cards-grid { grid-template-columns:repeat(2,1fr); }
-  .content { padding:16px; }
-  .topbar  { padding:0 16px; }
-  .kpi-value { font-size:34px; }
+  .kanban-board { grid-template-columns:repeat(2,1fr); }
+  .kpi-value { font-size:36px; }
+  .content { padding:20px; }
 }
-@media (max-width:480px) {
+
+/* ── Tablet pequeña (600-839px) ── */
+@media (max-width:839px) {
+  .sidebar { 
+    transform:translateX(-100%); 
+    z-index:200; 
+    width:100%;
+    max-width:300px;
+  }
+  .sidebar.open { transform:translateX(0); }
+  .overlay { display:none; }
+  .overlay.open { display:block; z-index:150; }
+  .main { margin-left:0; }
+  .menu-toggle { display:flex !important; }
+  .kanban-board { grid-template-columns:1fr; }
+  .cards-grid { grid-template-columns:1fr; }
+  .content { padding:14px; }
+  .topbar { padding:0 12px; }
+  .topbar-title { font-size:16px; }
+  .kpi-value { font-size:32px; }
   .two-col { grid-template-columns:1fr; }
-  .cards-grid { grid-template-columns:1fr 1fr; }
-  .section-header { flex-direction:column; align-items:flex-start; }
-  .kpi-value { font-size:28px; }
+  .section-title { font-size:18px; }
+  .btn-secondary { font-size:12px; padding:6px 10px; }
+  .data-table { font-size:12px; }
+  .data-table th { padding:8px 6px; }
+  .data-table td { padding:8px 6px; }
+}
+
+/* ── Móvil (hasta 599px) ── */
+@media (max-width:599px) {
+  .sidebar { 
+    transform:translateX(-100%); 
+    z-index:200; 
+    width:100%;
+    max-width:280px;
+    padding:12px;
+  }
+  .sidebar.open { transform:translateX(0); }
+  .overlay.open { display:block; z-index:150; }
+  .main { margin-left:0; }
+  .topbar { 
+    padding:0 10px;
+    height:56px;
+    gap:8px;
+  }
+  .topbar-title { 
+    font-size:14px; 
+    display:none;
+  }
+  .menu-toggle { display:flex !important; }
+  .content { padding:12px; }
+  .section-header { 
+    flex-direction:column;
+    align-items:flex-start;
+    gap:8px;
+  }
+  .section-title { font-size:16px; }
+  .section-subtitle { font-size:11px; }
+  .cards-grid { 
+    grid-template-columns:1fr;
+    gap:10px;
+  }
+  .card { padding:12px; }
+  .kpi-value { 
+    font-size:24px;
+    font-weight:900;
+  }
+  .kpi-label { font-size:10px; }
+  .kanban-board { grid-template-columns:1fr; }
+  .kanban-column { padding:8px 0; }
+  .data-table { 
+    font-size:10px;
+    width:100%;
+    overflow-x:auto;
+    display:block;
+  }
+  .data-table thead { display:none; }
+  .data-table tbody { display:block; }
+  .data-table tr { 
+    display:block; 
+    margin-bottom:8px;
+    border:1px solid var(--border);
+    border-radius:6px;
+    padding:8px;
+    background:rgba(16,32,96,0.5);
+  }
+  .data-table td { 
+    display:block;
+    text-align:left;
+    padding:4px 0;
+    border:none;
+  }
+  .data-table td::before {
+    content:attr(data-label);
+    font-weight:700;
+    margin-right:4px;
+    color:var(--text-secondary);
+  }
+  .btn-primary, .btn-secondary { 
+    width:100%;
+    padding:9px 12px;
+    font-size:12px;
+  }
+  .two-col { grid-template-columns:1fr; }
+  .form-group { margin-bottom:10px; }
+  .input-field { 
+    width:100%;
+    padding:8px;
+    font-size:14px;
+  }
+  .sound-indicator {
+    bottom:12px;
+    right:12px;
+    font-size:12px;
+    max-width:calc(100vw - 32px);
+  }
+  .alert-badge {
+    width:32px;
+    height:32px;
+    min-width:32px;
+    font-size:12px;
+    padding:0;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+  }
+  .sidebar-brand { padding:10px; }
+  .brand-logo { font-size:14px; }
+  .brand-sub { font-size:9px; }
+  .brand-badge { font-size:8px; display:none; }
+  .nav-item { padding:8px 10px; font-size:12px; }
+  .nav-item .icon { font-size:16px; }
+}
+
+/* ── Móvil muy pequeño (hasta 359px) ── */
+@media (max-width:359px) {
+  .sidebar { max-width:260px; }
+  .content { padding:8px; }
+  .kpi-value { font-size:20px; }
+  .section-title { font-size:14px; }
+  .btn-primary, .btn-secondary { font-size:11px; padding:7px 10px; }
+  .card { padding:8px; }
+  .data-table { font-size:9px; }
+}
+
+/* ── Media queries específica para Declaraciones SAT ── */
+@media (max-width:839px) {
+  .decl-toolbar {
+    flex-direction:column;
+    gap:10px;
+  }
+  .decl-tabs {
+    width:100%;
+    overflow-x:auto;
+    flex-wrap:nowrap;
+  }
+  .decl-tab { 
+    padding:8px 12px;
+    font-size:11px;
+    white-space:nowrap;
+  }
+  .decl-resumen-bar {
+    flex-wrap:wrap;
+    gap:8px;
+  }
+  .decl-resumen-stat { 
+    flex:1;
+    min-width:100px;
+  }
+  .table-wrap { overflow-x:auto; }
+  .data-table { font-size:10px; }
+  .decl-check { 
+    width:18px;
+    height:18px;
+    cursor:pointer;
+  }
+}
+
+@media (max-width:599px) {
+  .decl-toolbar { padding:10px; }
+  .decl-tabs { 
+    gap:4px;
+    overflow-x:auto;
+    -webkit-overflow-scrolling:touch;
+  }
+  .decl-tab { 
+    padding:6px 10px;
+    font-size:10px;
+    flex-shrink:0;
+  }
+  .decl-resumen-bar {
+    padding:10px;
+    gap:6px;
+  }
+  .decl-resumen-stat { 
+    min-width:80px;
+    gap:4px;
+  }
+  .data-table { 
+    font-size:9px;
+  }
+  .data-table th {
+    font-size:9px;
+    padding:6px 4px;
+  }
+  .data-table td {
+    font-size:9px;
+    padding:6px 4px;
+  }
 }

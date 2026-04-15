@@ -251,10 +251,10 @@ function playAlertSound() {
   const hasRed    = ACTIVE_ALERTS.some(a => a.type === 'red');
   const hasOrange = ACTIVE_ALERTS.some(a => a.type === 'orange');
   if (!hasRed && !hasOrange) return;
-  const inactiveMs = Date.now() - lastUserActivity;
-  if (inactiveMs < 55 * 60 * 1000) return;
+
+  // Control anti-spam: máximo 1 sonido cada 30 minutos
   const lastSound  = parseInt(localStorage.getItem(SOUND_KEY) || '0');
-  if ((Date.now() - lastSound) < 60 * 60 * 1000) return;
+  if ((Date.now() - lastSound) < 30 * 60 * 1000) return;
 
   soundPlaying = true;
   localStorage.setItem(SOUND_KEY, Date.now().toString());
