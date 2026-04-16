@@ -129,12 +129,19 @@ const STALE_DAYS = 7;
 const WARN_DAYS = 3;
 
 /**
+ * Set de IDs de citas ya alertadas en esta sesión.
+ * Evita generar alertas duplicadas cada vez que corre el motor.
+ */
+const ALERTED_APPOINTMENTS = new Set();
+
+/**
  * Motor principal de alertas.
  * Evalúa TODAS las condiciones críticas del sistema:
  *   - Tareas vencidas (hoy > dueDate y no completada)
  *   - Tareas próximas a vencer (dueDate - hoy <= WARN_DAYS)
  *   - Tareas sin seguimiento (lastUpdate > STALE_DAYS días)
  *   - Citas no realizadas (dateTime < ahora y aún "scheduled")
+ *   - Citas próximas (≤60 min, ≤30 min, ≤10 min) → alerta anticipada
  *
  * LLAMAR después de: init, crear, editar, eliminar cualquier registro.
  */
@@ -187,6 +194,46 @@ function runAlertsEngine() {
         type: 'red',
         text: `Cita no realizada: "${a.title}"`,
         sub:  `${clientName(a.clientId)} · ${fmtDateTime(a.dateTime)}`
+      });
+    }
+  });
+
+  /* ── Alertas anticipadas de citas próximas ── */
+  appointments.forEach(a => {
+    if (a.status !== 'scheduled') return;
+
+    const minutesBefore = (new Date(a.dateTime) - new Date()) / 60000;
+
+    // Solo citas futuras dentro de la próxima hora
+    if (minutesBefore <= 0 || minutesBefore > 60) return;
+
+    const alertKey = `${a.id}_${minutesBefore <= 10 ? '10' : minutesBefore <= 30 ? '30' : '60'}`;
+    if (ALERTED_APPOINTMENTS.has(alertKey)) return;
+    ALERTED_APPOINTMENTS.add(alertKey);
+
+    const mins = Math.floor(minutesBefore);
+    const cname = clientName(a.clientId);
+
+    if (minutesBefore <= 10) {
+      // ≤10 min → alerta roja urgente
+      ACTIVE_ALERTS.push({
+        type: 'red',
+        text: `⏰ ¡Cita AHORA: "${a.title}"!`,
+        sub:  `${cname} · Inicia en ${mins} minuto(s)`
+      });
+    } else if (minutesBefore <= 30) {
+      // ≤30 min → naranja alto
+      ACTIVE_ALERTS.push({
+        type: 'orange',
+        text: `📅 Cita próxima: "${a.title}"`,
+        sub:  `${cname} · Inicia en ${mins} minutos`
+      });
+    } else {
+      // ≤60 min → naranja preventivo
+      ACTIVE_ALERTS.push({
+        type: 'orange',
+        text: `📅 Cita en 1 hora: "${a.title}"`,
+        sub:  `${cname} · Inicia en ${mins} minutos`
       });
     }
   });
@@ -282,7 +329,7 @@ function showSoundIndicator(level, label) {
   div.style.borderColor = border;
   div.onclick = () => { div.remove(); if(howlCritical) howlCritical.stop(); if(howlWarning) howlWarning.stop(); };
   div.innerHTML = `<span class="sound-icon">${level === 'red' ? '🚨' : '⚠️'}</span>
-    <div><div class="sound-text" style="color:${border}">${label} — ${count} tarea(s)</div>
+    <div><div class="sound-text" style="color:${border}">${label} — ${count} alerta(s)</div>
     <div class="sound-sub">Haz clic para silenciar</div></div>`;
   document.body.appendChild(div);
   setTimeout(() => { if (div.parentNode) div.remove(); }, 9000);
