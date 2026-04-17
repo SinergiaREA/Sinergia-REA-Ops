@@ -557,5 +557,13 @@
     patchClientesFunctions();
   </script>
 
+  <!--
+    5. Suite de Tests FCM  ← NUEVO
+    Carga funciones de prueba para debuggear notificaciones push.
+    Las funciones se exponen en window.__FCM_Tests
+    Uso: window.__FCM_Tests.quickCheck() en consola
+  -->
+  <script src="tests/fcm-manual-tests.js"></script>
+
 </body>
 </html>

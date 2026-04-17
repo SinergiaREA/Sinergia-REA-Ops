@@ -1832,6 +1832,129 @@ function toast(msg, icon = 'success') {
   });
 }
 
+/**
+ * Panel flotante de debugging FCM
+ * Muestra el estado actual de las notificaciones push en la app
+ */
+function showFCMDebugPanel() {
+  const debug = window.__FCM_DEBUG || {};
+  const status = debug.status || 'UNKNOWN';
+  
+  const statusColors = {
+    'ACTIVE': { bg: '#1b5e20', text: '✅ ACTIVO', color: '#4caf50' },
+    'ERROR': { bg: '#b71c1c', text: '❌ ERROR', color: '#f44336' },
+    'PERMISSION_DENIED': { bg: '#e65100', text: '⚠️ PERMISOS BLOQUEADOS', color: '#ff6f00' },
+    'TOKEN_ERROR': { bg: '#c62828', text: '❌ ERROR TOKEN', color: '#e53935' },
+    'TOKEN_NULL': { bg: '#f57c00', text: '⚠️ TOKEN NULO', color: '#ff9800' },
+    'BROWSER_NOT_SUPPORTED': { bg: '#37474f', text: '❌ NO SOPORTADO', color: '#78909c' },
+    'UNKNOWN': { bg: '#616161', text: '❓ DESCONOCIDO', color: '#9e9e9e' }
+  };
+  
+  const colors = statusColors[status] || statusColors['UNKNOWN'];
+  const logs = debug.logs || [];
+  
+  let logsHTML = '';
+  logs.forEach((log, i) => {
+    const logColors = {
+      'SUCCESS': 'color: #4caf50; font-weight: bold;',
+      'ERROR': 'color: #f44336; font-weight: bold;',
+      'WARN': 'color: #ff9800; font-weight: bold;',
+      'INFO': 'color: #2196f3;'
+    };
+    const style = logColors[log.tipo] || '';
+    logsHTML += `<tr style="border-bottom: 1px solid rgba(0,0,0,0.1);">
+      <td style="padding: 6px; font-size: 11px; font-weight: 600; ${style}">${log.tipo}</td>
+      <td style="padding: 6px; font-size: 11px; color: #333; word-break: break-word;">${log.msg}</td>
+      <td style="padding: 6px; font-size: 10px; color: #999; white-space: nowrap;">${new Date(log.timestamp).toLocaleTimeString('es-MX')}</td>
+    </tr>`;
+  });
+  
+  const errorInfo = debug.error ? `<p style="margin: 10px 0; padding: 8px; background: #ffebee; border-left: 3px solid #f44336; border-radius: 4px; font-size: 12px; color: #c62828;"><strong>Error:</strong> ${debug.error}</p>` : '';
+  const tokenInfo = debug.token ? `<p style="margin: 10px 0; padding: 8px; background: #e3f2fd; border-left: 3px solid #2196f3; border-radius: 4px; font-size: 11px; color: #1565c0;"><strong>Token:</strong> <code style="word-break: break-all;">${debug.token.substring(0, 30)}...${debug.token.substring(debug.token.length - 20)}</code></p>` : '';
+  const uidInfo = debug.uid ? `<p style="margin: 10px 0; padding: 8px; background: #f3e5f5; border-left: 3px solid #9c27b0; border-radius: 4px; font-size: 11px; color: #6a1b9a;"><strong>UID:</strong> <code>${debug.uid}</code></p>` : '';
+  
+  Swal.fire({
+    title: '🔍 Panel de Debugging — FCM',
+    width: '90%',
+    html: `
+      <div style="text-align: left; background: #f5f5f5; padding: 15px; border-radius: 8px; font-family: monospace;">
+        <div style="margin-bottom: 15px; padding: 10px; background: ${colors.bg}; color: white; border-radius: 6px; font-weight: bold; font-size: 14px;">
+          ${colors.text}
+        </div>
+        
+        ${errorInfo}
+        ${tokenInfo}
+        ${uidInfo}
+        
+        <div style="margin-top: 15px; padding-top: 10px; border-top: 1px solid #ddd;">
+          <p style="margin: 5px 0; font-weight: bold; font-size: 12px; color: #333;">📋 Registro de eventos:</p>
+          <div style="max-height: 300px; overflow-y: auto; background: white; border: 1px solid #ddd; border-radius: 4px; padding: 0;">
+            <table style="width: 100%; border-collapse: collapse; font-size: 11px;">
+              <thead style="background: #eeeeee; position: sticky; top: 0;">
+                <tr>
+                  <th style="padding: 6px; text-align: left; border-right: 1px solid #ddd; font-weight: 600; color: #333; width: 70px;">Tipo</th>
+                  <th style="padding: 6px; text-align: left; border-right: 1px solid #ddd; font-weight: 600; color: #333;">Mensaje</th>
+                  <th style="padding: 6px; text-align: left; font-weight: 600; color: #333; width: 90px;">Hora</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${logsHTML || '<tr><td colspan="3" style="padding: 10px; text-align: center; color: #999;">Sin registros</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+        <p style="margin-top: 10px; font-size: 11px; color: #666; padding: 10px; background: #fff3e0; border-radius: 4px;">
+          💡 <strong>Tip:</strong> Abre la consola del navegador (F12) y busca "[FCM]" para ver más detalles en tiempo real.
+        </p>
+      </div>
+    `,
+    confirmButtonText: 'Cerrar',
+    didOpen: () => {
+      /* Copiar logs a portapapeles automáticamente */
+      const logsText = logs.map(l => `[${l.tipo}] ${l.msg}`).join('\n');
+      console.log('FCM Debug Logs:\n', logsText);
+    }
+  });
+}
+
+/**
+ * Agregar botón de debugging en el topbar (solo en desarrollo/para admin)
+ */
+function addFCMDebugButton() {
+  // Solo mostrar a admin
+  if (window.currentUser?.rol !== 'admin') return;
+  
+  const topbar = document.querySelector('.topbar');
+  if (!topbar) return;
+  
+  const debugBtn = document.createElement('button');
+  debugBtn.innerHTML = '🔍 FCM';
+  debugBtn.style.cssText = `
+    background: rgba(76, 175, 80, 0.1);
+    border: 1px solid rgba(76, 175, 80, 0.3);
+    color: #4caf50;
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+    margin-right: 10px;
+    transition: all 0.3s;
+  `;
+  debugBtn.onmouseover = () => {
+    debugBtn.style.background = 'rgba(76, 175, 80, 0.2)';
+    debugBtn.style.borderColor = 'rgba(76, 175, 80, 0.6)';
+  };
+  debugBtn.onmouseout = () => {
+    debugBtn.style.background = 'rgba(76, 175, 80, 0.1)';
+    debugBtn.style.borderColor = 'rgba(76, 175, 80, 0.3)';
+  };
+  debugBtn.onclick = showFCMDebugPanel;
+  
+  topbar.insertBefore(debugBtn, topbar.firstChild);
+}
+
 /* ================================================================
    12. INIT — Arranque de la aplicación
    ================================================================ */
@@ -1856,7 +1979,10 @@ function init() {
   // 4. Renderizar el dashboard inicial
   renderDashboard();
 
-  // 5. Asignar data-view a nav items para el navigate()
+  // 5. Agregar botón de debugging FCM (solo para admin)
+  addFCMDebugButton();
+
+  // 6. Asignar data-view a nav items para el navigate()
   const navItems = document.querySelectorAll('.nav-item');
   // IMPORTANTE: el orden debe coincidir exactamente con el orden
   // de los .nav-item en index.html (incluyendo el nuevo "declaraciones")

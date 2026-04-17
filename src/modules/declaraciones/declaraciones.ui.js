@@ -253,7 +253,7 @@ function buildTablaHTML(filas, checksDef, tipo) {
         : `<button onclick="window.__decl_toggleCliente('${cliente.id}', 'inactive')" title="Marcar inactivo / se fue del despacho" style="
              background:rgba(107,114,128,0.12);color:#6b7280;border:none;
              border-radius:6px;padding:3px 8px;font-size:11px;cursor:pointer;margin-left:6px">
-             🔴 Inactivar</button>`;
+             🔴 Baja</button>`;
 
       return `
         <tr id="decl-row-${cliente.id}" style="${isInactive ? 'opacity:.5' : ''}">
