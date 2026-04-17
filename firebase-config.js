@@ -302,7 +302,7 @@ window.firebaseBootstrap = function() {
    - Se registra el Service Worker SOLO desde el mismo origen.
    ================================================================ */
 
-const FCM_VAPID_KEY = 'BFiq3KgzB5bV_6LhAY6I7t3YumlJ0djo7_R97iMuDZcr_XtXT39-Oxfskv-V7c0WArZLuFe_lgyi0WWaABNFWIo';
+const FCM_VAPID_KEY = 'BMrGJhDoVNqgCAVvv-B689jxtzdC8T7CIeE8ugUgIDaMvGlHelqUL45YWLuOY1XYbyO71RAAnDfRB5-eQv4gnEQ';
 
 async function initFCM() {
   /* 1. Verificar soporte del navegador */
