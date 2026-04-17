@@ -312,10 +312,17 @@ async function initFCM() {
   }
 
   try {
-    /* 2. Registrar el Service Worker desde la raíz del proyecto */
-    const swReg = await navigator.serviceWorker.register('/firebase-messaging-sw.js', {
-      scope: '/'
-    });
+    /* 2. Registrar el Service Worker desde la raíz del proyecto.
+          ── FIX BUG 4 ──
+          El scope '/' hardcodeado falla cuando la app se sirve desde un
+          subdirectorio (ej: /sinergiaops/ en GitHub Pages o servidor local).
+          SOLUCIÓN: usar self.location.origin + '/' de forma dinámica,
+          o simplemente omitir el scope y dejar que el navegador lo infiera
+          desde la ubicación del archivo SW (que siempre está en la raíz).
+          También cambiamos el path de '/firebase-messaging-sw.js' a relativo
+          para que funcione tanto en localhost como en producción. */
+    const swPath = new URL('firebase-messaging-sw.js', window.location.href).pathname;
+    const swReg  = await navigator.serviceWorker.register(swPath);
     console.log('[FCM] Service Worker registrado:', swReg.scope);
 
     /* 3. Pedir permiso de notificaciones al usuario (solo 1 vez) */

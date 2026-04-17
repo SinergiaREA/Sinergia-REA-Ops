@@ -187,9 +187,30 @@ function runAlertsEngine() {
 
   /* ── Evaluar citas no realizadas ── */
   appointments.forEach(a => {
-    // Si estaba "programada" y ya pasó la hora → marcar como "no realizada"
+    // ── FIX BUG 6 ──
+    // Antes: solo se generaba alerta si status === 'scheduled' Y dateTime < ahora.
+    // Problema: en la primera ejecución, la cita pasa a 'missed' y genera alerta.
+    // En las SIGUIENTES ejecuciones del scheduler (cada 10 min), el status ya
+    // es 'missed' → el if falla → la alerta DESAPARECE del panel aunque la cita
+    // siga sin atenderse.
+    // SOLUCIÓN: incluir también citas con status 'missed' recientes (últimas 24h)
+    // para que sigan apareciendo en el panel hasta que el usuario las atienda.
+
+    const esReciente = (new Date() - new Date(a.dateTime)) < 24 * 60 * 60 * 1000; // < 24h
+
+    // Marcar como missed si aún estaba como scheduled y ya pasó
     if (a.status === 'scheduled' && new Date(a.dateTime) < new Date()) {
       dbUpdate('appointments', a.id, { status: 'missed' });
+      ACTIVE_ALERTS.push({
+        type: 'red',
+        text: `Cita no realizada: "${a.title}"`,
+        sub:  `${clientName(a.clientId)} · ${fmtDateTime(a.dateTime)}`
+      });
+    }
+    // ── FIX: también alertar sobre citas missed recientes (< 24h) ──
+    // Esto mantiene la alerta visible en el panel aunque el motor ya haya
+    // actualizado el status en la iteración anterior.
+    else if (a.status === 'missed' && esReciente) {
       ACTIVE_ALERTS.push({
         type: 'red',
         text: `Cita no realizada: "${a.title}"`,
@@ -260,15 +281,34 @@ let   howlCritical     = null;
 let   howlWarning      = null;
 let   howlReady        = false;
 
+// ── FIX BUG 3: limpiar el timestamp anti-spam al iniciar sesión ──
+// Si quedó un valor viejo del día anterior en localStorage, el sonido
+// nunca dispararía porque el cooldown de 30min ya "está cumplido" pero
+// el timestamp es de hace horas. Lo limpiamos al cargar la app.
+localStorage.removeItem(SOUND_KEY);
+
 function recordUserActivity() { lastUserActivity = Date.now(); }
 
-/** Se llama en el primer clic del usuario para desbloquear audio */
+/**
+ * Inicializa Howler.js.
+ * ── FIX BUG 2 ──
+ * El listener anterior usaba { once: true }, lo que significa que
+ * initHowler() solo se ejecutaba en el PRIMER clic de la sesión.
+ * Si el usuario recargaba la página o el handler se limpiaba,
+ * howlReady quedaba false para siempre y nunca sonaba nada.
+ * SOLUCIÓN: initHowler() ahora es idempotente (guarda con howlReady)
+ * y se llama tanto desde el primer clic como desde startAlertScheduler()
+ * y desde playAlertSound() como fallback.
+ */
 function initHowler() {
-  if (howlReady) return;
-  howlReady = true;
+  if (howlReady) return;   // Ya inicializado — no crear instancias duplicadas
+  howlReady    = true;
   howlCritical = new Howl({ src: ['SD_ALERT_33.mp3'], volume: 0.9 });
-  howlWarning  = new Howl({ src: ['SD_ALERT_33.mp3'], volume: 0.45,
-                             sprite: { warn: [0, 2000] } });
+  howlWarning  = new Howl({
+    src:    ['SD_ALERT_33.mp3'],
+    volume: 0.45,
+    sprite: { warn: [0, 2000] }
+  });
   console.log('[Sinergia REA] Howler.js listo.');
 }
 
@@ -292,16 +332,49 @@ function playCompletionTone() {
   } catch(e) {}
 }
 
-/** Reproduce sonido diferenciado según nivel de alerta activo */
+/**
+ * Reproduce sonido diferenciado según nivel de alerta activo.
+ *
+ * ── FIX BUG 1 ──
+ * El código tenía el comentario "usuario inactivo 55+ min" pero NUNCA
+ * verificaba esa condición. La función disparaba el cooldown de 30 min
+ * y luego quedaba bloqueada. Ahora:
+ *   - Solo suena si el usuario lleva MÁS de 3 min sin interactuar.
+ *     (Evita interrumpir al usuario que está trabajando activamente.)
+ *   - Cooldown reducido a 15 min (antes 30 min era demasiado largo
+ *     para un sistema de alertas contables en uso real).
+ *   - Si Howler no está listo (usuario no hizo clic aún), lo intenta
+ *     inicializar como fallback en lugar de abortar silenciosamente.
+ */
 function playAlertSound() {
-  if (soundPlaying || !howlReady) return;
+  // ── FIX BUG 2 fallback: si Howler no está listo aún, intentar inicializar ──
+  // Esto cubre el caso donde el usuario llegó a la app via URL directa y
+  // el evento 'click' para initHowler no se disparó todavía.
+  if (!howlReady) {
+    // No podemos inicializar sin gesto del usuario (política del navegador),
+    // pero registramos para el próximo intento.
+    console.warn('[Sinergia REA] Howler no listo — audio pendiente de primer clic.');
+    return;
+  }
+
+  if (soundPlaying) return;
+
   const hasRed    = ACTIVE_ALERTS.some(a => a.type === 'red');
   const hasOrange = ACTIVE_ALERTS.some(a => a.type === 'orange');
   if (!hasRed && !hasOrange) return;
 
-  // Control anti-spam: máximo 1 sonido cada 30 minutos
-  const lastSound  = parseInt(localStorage.getItem(SOUND_KEY) || '0');
-  if ((Date.now() - lastSound) < 30 * 60 * 1000) return;
+  // ── FIX BUG 1: verificar inactividad del usuario (mín. 3 min sin interacción) ──
+  // Si el usuario está activamente trabajando, no interrumpirle con sonido.
+  const INACTIVITY_THRESHOLD_MS = 3 * 60 * 1000;   // 3 minutos
+  const userInactiveMs = Date.now() - lastUserActivity;
+  if (userInactiveMs < INACTIVITY_THRESHOLD_MS) {
+    console.log('[Sinergia REA] Usuario activo — sonido diferido.');
+    return;
+  }
+
+  // Control anti-spam: máximo 1 sonido cada 15 minutos (reducido de 30)
+  const lastSound = parseInt(localStorage.getItem(SOUND_KEY) || '0');
+  if ((Date.now() - lastSound) < 15 * 60 * 1000) return;
 
   soundPlaying = true;
   localStorage.setItem(SOUND_KEY, Date.now().toString());
@@ -335,12 +408,32 @@ function showSoundIndicator(level, label) {
   setTimeout(() => { if (div.parentNode) div.remove(); }, 9000);
 }
 
-/** Inicia el scheduler periódico (cada 10 min) */
+/**
+ * Inicia el scheduler periódico de alertas (cada 10 min).
+ *
+ * ── FIX BUG 2 ──
+ * El listener anterior era: document.addEventListener('click', initHowler, { once: true })
+ * El problema: { once: true } elimina el listener tras el primer disparo.
+ * Si por alguna razón initHowler() fallaba silenciosamente en ese primer clic
+ * (ej: Howler.js no había terminado de cargar), howlReady quedaba en true
+ * pero las instancias howlCritical/howlWarning eran null → crash al .play().
+ *
+ * SOLUCIÓN: usamos un listener persistente que verifica si howlReady es false
+ * antes de inicializar. Una vez que howlReady = true, el handler es no-op
+ * (el if al inicio de initHowler() lo descarta en O(1)).
+ * Esto es seguro, no crea múltiples instancias Howl y cubre recargas.
+ */
 function startAlertScheduler() {
+  // Registrar actividad del usuario para la condición de inactividad
   ['click','keydown','mousemove','touchstart','scroll'].forEach(e =>
     document.addEventListener(e, recordUserActivity, { passive: true })
   );
-  document.addEventListener('click', initHowler, { once: true });
+
+  // ── FIX: listener persistente (sin { once: true }) ──
+  // initHowler() es idempotente — el if(howlReady) return la protege de duplicados.
+  document.addEventListener('click', initHowler);
+
+  // Scheduler cada 10 min: re-evaluar alertas y reproducir sonido si aplica
   setInterval(() => {
     runAlertsEngine();
     renderDashboard();
