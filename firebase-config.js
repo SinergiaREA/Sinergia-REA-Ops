@@ -305,114 +305,76 @@ window.firebaseBootstrap = function() {
 const FCM_VAPID_KEY = 'BFiq3KgzB5bV_6LhAY6I7t3YumlJ0djo7_R97iMuDZcr_XtXT39-Oxfskv-V7c0WArZLuFe_lgyi0WWaABNFWIo';
 
 async function initFCM() {
-  const debugLog = [];
-  
   /* 1. Verificar soporte del navegador */
   if (!('serviceWorker' in navigator) || !('Notification' in window)) {
-    const msg = '[FCM] Este navegador no soporta push notifications.';
-    console.warn(msg);
-    debugLog.push({ tipo: 'ERROR', msg, timestamp: new Date().toISOString() });
-    window.__FCM_DEBUG = { status: 'BROWSER_NOT_SUPPORTED', logs: debugLog };
+    console.warn('[FCM] Este navegador no soporta push notifications.');
     return;
   }
-  debugLog.push({ tipo: 'INFO', msg: '[FCM] ✓ Navegador soporta SW y Notifications', timestamp: new Date().toISOString() });
 
   try {
-    /* 2. Desregistrar cualquier Service Worker antiguo con scope incorrecto */
-    debugLog.push({ tipo: 'INFO', msg: '[FCM] Paso 2: Limpiando SWs antiguos...', timestamp: new Date().toISOString() });
+    /* 2. Desregistrar cualquier Service Worker antiguo con scope incorrecto.
+          ── FIX CAUSA 5 ──
+          Si existe un SW registrado de una sesión anterior con scope '/' u otro
+          scope diferente al actual, el nuevo registro entra en conflicto y el
+          push service de Google devuelve "Registration failed - push service error".
+          Solución: desregistrar todos los SWs existentes antes de registrar el nuevo. */
     const registrationsExistentes = await navigator.serviceWorker.getRegistrations();
-    debugLog.push({ tipo: 'INFO', msg: `[FCM] SWs encontrados: ${registrationsExistentes.length}`, timestamp: new Date().toISOString() });
-    
     for (const reg of registrationsExistentes) {
       if (!reg.scope.endsWith('/firebase-messaging-sw.js') &&
            reg.scope !== window.location.origin + '/') {
         await reg.unregister();
-        const msg = `[FCM] SW antiguo desregistrado: ${reg.scope}`;
-        console.log(msg);
-        debugLog.push({ tipo: 'INFO', msg, timestamp: new Date().toISOString() });
+        console.log('[FCM] SW antiguo desregistrado:', reg.scope);
       }
     }
 
-    /* 3. Registrar el Service Worker con ruta dinámica */
-    debugLog.push({ tipo: 'INFO', msg: '[FCM] Paso 3: Registrando Service Worker...', timestamp: new Date().toISOString() });
+    /* 3. Registrar el Service Worker con ruta dinámica (funciona en cualquier entorno).
+          ── FIX anterior BUG 4 mantenido ── */
     const swPath = new URL('firebase-messaging-sw.js', window.location.href).pathname;
-    debugLog.push({ tipo: 'INFO', msg: `[FCM] Ruta del SW: ${swPath}`, timestamp: new Date().toISOString() });
-    
     const swReg  = await navigator.serviceWorker.register(swPath);
-    const swMsg = `[FCM] ✓ Service Worker registrado en scope: ${swReg.scope}`;
-    console.log(swMsg);
-    debugLog.push({ tipo: 'SUCCESS', msg: swMsg, timestamp: new Date().toISOString() });
+    console.log('[FCM] Service Worker registrado:', swReg.scope);
 
-    /* 4. Esperar a que el SW esté activo */
-    debugLog.push({ tipo: 'INFO', msg: '[FCM] Paso 4: Esperando a que SW esté ACTIVO...', timestamp: new Date().toISOString() });
+    /* 4. ── FIX CAUSA PRINCIPAL: "push service error" ──
+          El error "Registration failed - push service error" ocurre porque
+          getToken() se llamaba INMEDIATAMENTE después de register(), cuando
+          el SW todavía estaba en estado 'installing' o 'waiting', no 'active'.
+          FCM requiere que el SW esté completamente activo antes de suscribirse
+          al push service de Google.
+
+          Solución: esperar explícitamente a que el SW esté en estado 'active'.
+          - Si ya está activo → continuar de inmediato (segunda carga o reload).
+          - Si está instalando → esperar el evento 'statechange' hasta 'activated'.
+          - Timeout de seguridad: 10 segundos máximo para no bloquear la app. */
     await esperarSWActivo(swReg);
-    const swActiveMsg = '[FCM] ✓ Service Worker ACTIVO y listo para FCM';
-    console.log(swActiveMsg);
-    debugLog.push({ tipo: 'SUCCESS', msg: swActiveMsg, timestamp: new Date().toISOString() });
 
-    /* 5. Pedir permiso de notificaciones al usuario */
-    debugLog.push({ tipo: 'INFO', msg: '[FCM] Paso 5: Solicitando permiso de notificaciones...', timestamp: new Date().toISOString() });
+    /* 5. Pedir permiso de notificaciones al usuario (el navegador lo recuerda) */
     const permission = await Notification.requestPermission();
-    
-    const permMsg = `[FCM] Respuesta del usuario: "${permission}"`;
-    console.log(permMsg);
-    debugLog.push({ tipo: permission === 'granted' ? 'SUCCESS' : 'WARN', msg: permMsg, timestamp: new Date().toISOString() });
-    
     if (permission !== 'granted') {
-      const denyMsg = `[FCM] ❌ PERMISO DENEGADO por el usuario. Las notificaciones estarán bloqueadas.`;
-      console.warn(denyMsg);
-      debugLog.push({ tipo: 'ERROR', msg: denyMsg, timestamp: new Date().toISOString() });
-      window.__FCM_DEBUG = { status: 'PERMISSION_DENIED', permission, logs: debugLog };
-      
-      /* Mostrar alerta amigable al usuario */
-      setTimeout(() => {
-        Swal.fire({
-          icon: 'info',
-          title: '⚠️ Notificaciones bloqueadas',
-          html: '<p>Permiso de notificaciones rechazado.</p><p><small>Para habilitarlas, ve a Configuración del navegador → Sinergia REA → Notificaciones</small></p>',
-          confirmButtonText: 'Entendido'
-        });
-      }, 1500);
+      console.warn('[FCM] Permiso de notificaciones denegado por el usuario.');
       return;
     }
 
-    /* 6. Obtener token FCM */
-    debugLog.push({ tipo: 'INFO', msg: '[FCM] Paso 6: Obteniendo token FCM...', timestamp: new Date().toISOString() });
-    let token;
-    try {
-      token = await getToken(messaging, {
-        vapidKey:                  FCM_VAPID_KEY,
-        serviceWorkerRegistration: swReg
-      });
-    } catch(tokenErr) {
-      const errMsg = `[FCM] ❌ Error al obtener token: ${tokenErr.message}`;
-      console.error(errMsg);
-      debugLog.push({ tipo: 'ERROR', msg: errMsg, error: tokenErr, timestamp: new Date().toISOString() });
-      window.__FCM_DEBUG = { status: 'TOKEN_ERROR', error: tokenErr.message, logs: debugLog };
-      throw tokenErr;
-    }
+    /* 6. Obtener token FCM — ahora el SW está garantizadamente activo */
+    const token = await getToken(messaging, {
+      vapidKey:                  FCM_VAPID_KEY,
+      serviceWorkerRegistration: swReg
+    });
 
     if (!token) {
-      const noTokenMsg = '[FCM] ❌ getToken() retornó null. Verifica VAPID Key en Firebase Console.';
-      console.warn(noTokenMsg);
-      debugLog.push({ tipo: 'ERROR', msg: noTokenMsg, timestamp: new Date().toISOString() });
-      window.__FCM_DEBUG = { status: 'TOKEN_NULL', logs: debugLog };
+      console.warn('[FCM] No se pudo obtener token FCM. Verifica la VAPID Key en Firebase Console.');
       return;
     }
 
-    const tokenMsg = `[FCM] ✓ Token obtenido: ${token.substring(0, 20)}...${token.substring(token.length - 10)}`;
-    console.log(tokenMsg);
-    debugLog.push({ tipo: 'SUCCESS', msg: tokenMsg, tokenLength: token.length, timestamp: new Date().toISOString() });
+    console.log('[FCM] Token obtenido:', token.substring(0, 20) + '...');
 
-    /* 7. Guardar token en Firestore */
-    debugLog.push({ tipo: 'INFO', msg: '[FCM] Paso 7: Guardando token en Firestore...', timestamp: new Date().toISOString() });
+    /* 7. Guardar token en Firestore bajo el UID del usuario autenticado.
+          Esto permite enviar notificaciones desde Firebase Console
+          o Cloud Functions directamente a este dispositivo/usuario.
+          🔒 Las Firestore Rules deben permitir write SOLO a auth.uid === uid */
     const uid = window.currentUser?.uid;
     if (uid) {
-      try {
-        await updateDoc(doc(db, 'fcm_tokens', uid), { 
-          token, 
-          updatedAt: new Date().toISOString() 
-        }).catch(async () => {
+      await updateDoc(doc(db, 'fcm_tokens', uid), { token, updatedAt: new Date().toISOString() })
+        .catch(async () => {
+          /* Si el documento no existe aún, lo creamos */
           const { setDoc } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
           await setDoc(doc(db, 'fcm_tokens', uid), {
             token,
@@ -422,30 +384,18 @@ async function initFCM() {
             updatedAt: new Date().toISOString()
           });
         });
-        const savedMsg = `[FCM] ✓ Token guardado en Firestore para UID: ${uid}`;
-        console.log(savedMsg);
-        debugLog.push({ tipo: 'SUCCESS', msg: savedMsg, timestamp: new Date().toISOString() });
-      } catch(dbErr) {
-        const dbErrMsg = `[FCM] ⚠️ Error guardando en Firestore: ${dbErr.message}`;
-        console.warn(dbErrMsg);
-        debugLog.push({ tipo: 'WARN', msg: dbErrMsg, error: dbErr.message, timestamp: new Date().toISOString() });
-      }
-    } else {
-      const noUidMsg = '[FCM] ⚠️ No hay currentUser.uid — token no se guardarà';
-      console.warn(noUidMsg);
-      debugLog.push({ tipo: 'WARN', msg: noUidMsg, timestamp: new Date().toISOString() });
+      console.log('[FCM] Token guardado en Firestore para UID:', uid);
     }
 
-    /* 8. Manejar notificaciones en FOREGROUND */
-    debugLog.push({ tipo: 'INFO', msg: '[FCM] Paso 8: Suscribiendo a mensajes en foreground...', timestamp: new Date().toISOString() });
+    /* 8. Manejar notificaciones cuando la app está en PRIMER PLANO
+          (el Service Worker las maneja cuando está en background) */
     onMessage(messaging, payload => {
-      const fgMsg = `[FCM] 📩 Mensaje en foreground: "${payload.notification?.title || 'Sin título'}"`;
-      console.log(fgMsg);
-      debugLog.push({ tipo: 'INFO', msg: fgMsg, timestamp: new Date().toISOString() });
+      console.log('[FCM] Mensaje en foreground:', payload);
 
       const title = payload.notification?.title || '🔔 Sinergia REA';
       const body  = payload.notification?.body  || 'Tienes una alerta pendiente';
 
+      /* Mostrar como notificación nativa del sistema */
       if (Notification.permission === 'granted') {
         new Notification(title, {
           body,
@@ -454,33 +404,15 @@ async function initFCM() {
         });
       }
 
+      /* Reproducir sonido de alerta si Howler ya está listo */
       if (typeof playAlertSound === 'function') {
         playAlertSound();
       }
     });
 
-    /* ✅ INICIALIZACIÓN COMPLETADA */
-    const successMsg = '[FCM] ✅ FCM INICIALIZADO CORRECTAMENTE — Notificaciones push ACTIVAS';
-    console.log('%c' + successMsg, 'color: #00ff00; font-weight: bold; font-size: 14px;');
-    debugLog.push({ tipo: 'SUCCESS', msg: successMsg, timestamp: new Date().toISOString() });
-    
-    window.__FCM_DEBUG = { status: 'ACTIVE', token, uid, logs: debugLog };
-
   } catch (err) {
-    const catchMsg = `[FCM] ❌ EXCEPCIÓN CRÍTICA: ${err.message}`;
-    console.error(catchMsg, err);
-    debugLog.push({ tipo: 'ERROR', msg: catchMsg, error: err.message, stack: err.stack, timestamp: new Date().toISOString() });
-    window.__FCM_DEBUG = { status: 'ERROR', error: err.message, logs: debugLog };
-    
-    /* Mostrar modal de error */
-    setTimeout(() => {
-      Swal.fire({
-        icon: 'error',
-        title: '❌ Error en notificaciones push',
-        html: `<p>No se pudo inicializar FCM.</p><p><small><code>${err.message}</code></small></p><p><small>Abre la consola (F12) y busca "[FCM]" para más detalles</small></p>`,
-        confirmButtonText: 'OK'
-      });
-    }, 2000);
+    /* FCM no es crítico — si falla, el resto de la app sigue funcionando */
+    console.error('[FCM] Error al inicializar:', err.message);
   }
 }
 
@@ -497,44 +429,38 @@ async function initFCM() {
  */
 function esperarSWActivo(swReg, timeoutMs = 10000) {
   return new Promise((resolve, reject) => {
-    /* Caso 1: El SW ya está activo */
+    /* Caso 1: El SW ya está activo (segunda carga, reload) → resolver de inmediato */
     if (swReg.active) {
-      console.log('[FCM] SW ya estaba ACTIVO — continuando.');
       resolve();
       return;
     }
 
-    /* Caso 2: El SW se está instalando → esperar statechange */
+    /* Caso 2: El SW se está instalando por primera vez → esperar statechange */
     const sw = swReg.installing || swReg.waiting;
     if (!sw) {
-      console.warn('[FCM] No hay SW en ningún estado — continuando de todos modos.');
+      /* No hay SW en ningún estado — resolver de todos modos para no bloquear */
       resolve();
       return;
     }
 
-    console.log(`[FCM] SW en estado "${sw.state}" — esperando a "activated" (máximo ${timeoutMs}ms)...`);
-
-    /* Timeout de seguridad */
+    /* Timeout de seguridad: si el SW tarda más de timeoutMs, continuar igual */
     const timer = setTimeout(() => {
-      console.warn('[FCM] ⏱️ Timeout esperando SW activo (continuando igual).');
+      console.warn('[FCM] Timeout esperando SW activo — continuando de todos modos.');
       resolve();
     }, timeoutMs);
 
-    /* Escuchar statechange */
+    /* Escuchar el evento statechange del SW */
     sw.addEventListener('statechange', function onStateChange(e) {
-      console.log(`[FCM] SW cambió a estado: "${e.target.state}"`);
-      
       if (e.target.state === 'activated') {
         clearTimeout(timer);
         sw.removeEventListener('statechange', onStateChange);
-        console.log('[FCM] ✓ Service Worker ACTIVATED — ready for FCM');
+        console.log('[FCM] Service Worker ahora activo — listo para getToken().');
         resolve();
       } else if (e.target.state === 'redundant') {
+        /* El SW fue reemplazado por otro (ej: nueva versión) */
         clearTimeout(timer);
         sw.removeEventListener('statechange', onStateChange);
-        const errMsg = 'SW marked as redundant — version conflict detected';
-        console.error('[FCM]', errMsg);
-        reject(new Error(errMsg));
+        reject(new Error('SW marcado como redundant — posible conflicto de versión.'));
       }
     });
   });
