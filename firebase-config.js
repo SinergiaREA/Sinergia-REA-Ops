@@ -12,6 +12,9 @@ import {
   getAuth, signInWithEmailAndPassword,
   signOut, onAuthStateChanged
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import {
+  getMessaging, getToken, onMessage
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging.js";
 
 const firebaseConfig = {
   apiKey:            "AIzaSyDW7e5W8AfPOyr9Yxs-oQjiK3Pr96EhuQ0",
@@ -22,9 +25,10 @@ const firebaseConfig = {
   appId:             "1:183145068777:web:2d00873eb660edfac29878"
 };
 
-const app  = initializeApp(firebaseConfig);
-const db   = getFirestore(app);
-const auth = getAuth(app);
+const app       = initializeApp(firebaseConfig);
+const db        = getFirestore(app);
+const auth      = getAuth(app);
+const messaging = getMessaging(app);
 
 // ── Exponer la instancia de Firestore para módulos ES6 externos ──
 // Los módulos en /src (declaraciones.service.js, etc.) la acceden
@@ -271,6 +275,8 @@ window.firebaseBootstrap = function() {
         await loadAllFromFirestore();
         hideLoadingScreen(); renderUserInfo();
         if(typeof init==='function') init();
+        /* ── Iniciar FCM push notifications ── */
+        initFCM();
       } catch(e) {
         hideLoadingScreen();
         Swal.fire({icon:'error',title:'Error de conexión',html:'No se pudo conectar a Firestore.<br>Verifica las reglas de seguridad.',confirmButtonText:'Reintentar'}).then(()=>location.reload());
@@ -283,3 +289,101 @@ window.firebaseBootstrap = function() {
     }
   });
 };
+
+/* ================================================================
+   FCM — Firebase Cloud Messaging
+   Push notifications reales (app abierta, minimizada o cerrada).
+
+   🔒 SEGURIDAD:
+   - El token FCM se guarda en Firestore bajo /fcm_tokens/{uid}
+     accesible SOLO por el usuario autenticado (Firestore Rules).
+   - La VAPID Key es pública por diseño (no es un secreto).
+   - Nunca se expone información sensible en el payload push.
+   - Se registra el Service Worker SOLO desde el mismo origen.
+   ================================================================ */
+
+const FCM_VAPID_KEY = 'BFiq3KgzB5bV_6LhAY6I7t3YumlJ0djo7_R97iMuDZcr_XtXT39-Oxfskv-V7c0WArZLuFe_lgyi0WWaABNFWIo';
+
+async function initFCM() {
+  /* 1. Verificar soporte del navegador */
+  if (!('serviceWorker' in navigator) || !('Notification' in window)) {
+    console.warn('[FCM] Este navegador no soporta push notifications.');
+    return;
+  }
+
+  try {
+    /* 2. Registrar el Service Worker desde la raíz del proyecto */
+    const swReg = await navigator.serviceWorker.register('/firebase-messaging-sw.js', {
+      scope: '/'
+    });
+    console.log('[FCM] Service Worker registrado:', swReg.scope);
+
+    /* 3. Pedir permiso de notificaciones al usuario (solo 1 vez) */
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') {
+      console.warn('[FCM] Permiso de notificaciones denegado.');
+      return;
+    }
+
+    /* 4. Obtener token FCM vinculado a este dispositivo */
+    const token = await getToken(messaging, {
+      vapidKey:            FCM_VAPID_KEY,
+      serviceWorkerRegistration: swReg
+    });
+
+    if (!token) {
+      console.warn('[FCM] No se pudo obtener token FCM.');
+      return;
+    }
+
+    console.log('[FCM] Token obtenido:', token.substring(0, 20) + '...');
+
+    /* 5. Guardar token en Firestore bajo el UID del usuario autenticado.
+          Esto permite enviar notificaciones desde Firebase Console
+          o Cloud Functions directamente a este dispositivo/usuario.
+          🔒 Las Firestore Rules deben permitir write SOLO a auth.uid === uid */
+    const uid = window.currentUser?.uid;
+    if (uid) {
+      await updateDoc(doc(db, 'fcm_tokens', uid), { token, updatedAt: new Date().toISOString() })
+        .catch(async () => {
+          /* Si el documento no existe aún, lo creamos */
+          const { setDoc } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+          await setDoc(doc(db, 'fcm_tokens', uid), {
+            token,
+            email:     window.currentUser.email,
+            nombre:    window.currentUser.nombre,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          });
+        });
+      console.log('[FCM] Token guardado en Firestore para UID:', uid);
+    }
+
+    /* 6. Manejar notificaciones cuando la app está en PRIMER PLANO
+          (el Service Worker las maneja cuando está en background) */
+    onMessage(messaging, payload => {
+      console.log('[FCM] Mensaje en foreground:', payload);
+
+      const title = payload.notification?.title || '🔔 Sinergia REA';
+      const body  = payload.notification?.body  || 'Tienes una alerta pendiente';
+
+      /* Mostrar como notificación nativa del sistema si el permiso lo permite */
+      if (Notification.permission === 'granted') {
+        new Notification(title, {
+          body,
+          icon: '/icon-192.png',
+          tag:  'sinergia-rea-foreground'
+        });
+      }
+
+      /* Además reproducir el sonido de advertencia existente en la app */
+      if (typeof playAlertSound === 'function') {
+        playAlertSound();
+      }
+    });
+
+  } catch (err) {
+    /* FCM no es crítico — si falla, el resto de la app sigue funcionando */
+    console.error('[FCM] Error al inicializar:', err.message);
+  }
+}
