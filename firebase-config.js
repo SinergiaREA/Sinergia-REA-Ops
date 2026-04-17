@@ -499,16 +499,29 @@ async function initFCM() {
     console.error(catchMsg, err);
     debugLog.push({ tipo: 'ERROR', msg: catchMsg, error: err.message, stack: err.stack, timestamp: new Date().toISOString() });
     window.__FCM_DEBUG = { status: 'ERROR', error: err.message, logs: debugLog };
-    
-    /* Mostrar modal de error */
-    setTimeout(() => {
-      Swal.fire({
-        icon: 'error',
-        title: '❌ Error en notificaciones push',
-        html: `<p>No se pudo inicializar FCM.</p><p><small><code>${err.message}</code></small></p><p><small>Abre la consola (F12) y busca "[FCM]" para más detalles</small></p>`,
-        confirmButtonText: 'OK'
-      });
-    }, 2000);
+
+    /* ── Solo mostrar modal si NO es un error de Push Service del navegador ──
+       "Registration failed - push service error" ocurre en Brave y navegadores
+       con Google Push Service deshabilitado. No es un error del sistema,
+       es una limitación del navegador — no se muestra modal al usuario. */
+    const esPushServiceError = err.message && (
+      err.message.includes('push service error') ||
+      err.message.includes('Registration failed') ||
+      err.message.includes('AbortError')
+    );
+
+    if (!esPushServiceError) {
+      setTimeout(() => {
+        Swal.fire({
+          icon: 'warning',
+          title: '⚠️ Notificaciones no disponibles',
+          html: `<p>Las notificaciones push no pudieron activarse en este navegador.</p><p><small>El sistema funcionará normalmente sin notificaciones.</small></p>`,
+          confirmButtonText: 'Entendido'
+        });
+      }, 2000);
+    } else {
+      console.warn('[FCM] Push Service no disponible en este navegador. El sistema continúa normalmente.');
+    }
   }
 }
 
