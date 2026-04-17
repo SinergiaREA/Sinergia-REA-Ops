@@ -312,40 +312,61 @@ async function initFCM() {
   }
 
   try {
-    /* 2. Registrar el Service Worker desde la raíz del proyecto.
-          ── FIX BUG 4 ──
-          El scope '/' hardcodeado falla cuando la app se sirve desde un
-          subdirectorio (ej: /sinergiaops/ en GitHub Pages o servidor local).
-          SOLUCIÓN: usar self.location.origin + '/' de forma dinámica,
-          o simplemente omitir el scope y dejar que el navegador lo infiera
-          desde la ubicación del archivo SW (que siempre está en la raíz).
-          También cambiamos el path de '/firebase-messaging-sw.js' a relativo
-          para que funcione tanto en localhost como en producción. */
+    /* 2. Desregistrar cualquier Service Worker antiguo con scope incorrecto.
+          ── FIX CAUSA 5 ──
+          Si existe un SW registrado de una sesión anterior con scope '/' u otro
+          scope diferente al actual, el nuevo registro entra en conflicto y el
+          push service de Google devuelve "Registration failed - push service error".
+          Solución: desregistrar todos los SWs existentes antes de registrar el nuevo. */
+    const registrationsExistentes = await navigator.serviceWorker.getRegistrations();
+    for (const reg of registrationsExistentes) {
+      if (!reg.scope.endsWith('/firebase-messaging-sw.js') &&
+           reg.scope !== window.location.origin + '/') {
+        await reg.unregister();
+        console.log('[FCM] SW antiguo desregistrado:', reg.scope);
+      }
+    }
+
+    /* 3. Registrar el Service Worker con ruta dinámica (funciona en cualquier entorno).
+          ── FIX anterior BUG 4 mantenido ── */
     const swPath = new URL('firebase-messaging-sw.js', window.location.href).pathname;
     const swReg  = await navigator.serviceWorker.register(swPath);
     console.log('[FCM] Service Worker registrado:', swReg.scope);
 
-    /* 3. Pedir permiso de notificaciones al usuario (solo 1 vez) */
+    /* 4. ── FIX CAUSA PRINCIPAL: "push service error" ──
+          El error "Registration failed - push service error" ocurre porque
+          getToken() se llamaba INMEDIATAMENTE después de register(), cuando
+          el SW todavía estaba en estado 'installing' o 'waiting', no 'active'.
+          FCM requiere que el SW esté completamente activo antes de suscribirse
+          al push service de Google.
+
+          Solución: esperar explícitamente a que el SW esté en estado 'active'.
+          - Si ya está activo → continuar de inmediato (segunda carga o reload).
+          - Si está instalando → esperar el evento 'statechange' hasta 'activated'.
+          - Timeout de seguridad: 10 segundos máximo para no bloquear la app. */
+    await esperarSWActivo(swReg);
+
+    /* 5. Pedir permiso de notificaciones al usuario (el navegador lo recuerda) */
     const permission = await Notification.requestPermission();
     if (permission !== 'granted') {
-      console.warn('[FCM] Permiso de notificaciones denegado.');
+      console.warn('[FCM] Permiso de notificaciones denegado por el usuario.');
       return;
     }
 
-    /* 4. Obtener token FCM vinculado a este dispositivo */
+    /* 6. Obtener token FCM — ahora el SW está garantizadamente activo */
     const token = await getToken(messaging, {
-      vapidKey:            FCM_VAPID_KEY,
+      vapidKey:                  FCM_VAPID_KEY,
       serviceWorkerRegistration: swReg
     });
 
     if (!token) {
-      console.warn('[FCM] No se pudo obtener token FCM.');
+      console.warn('[FCM] No se pudo obtener token FCM. Verifica la VAPID Key en Firebase Console.');
       return;
     }
 
     console.log('[FCM] Token obtenido:', token.substring(0, 20) + '...');
 
-    /* 5. Guardar token en Firestore bajo el UID del usuario autenticado.
+    /* 7. Guardar token en Firestore bajo el UID del usuario autenticado.
           Esto permite enviar notificaciones desde Firebase Console
           o Cloud Functions directamente a este dispositivo/usuario.
           🔒 Las Firestore Rules deben permitir write SOLO a auth.uid === uid */
@@ -366,7 +387,7 @@ async function initFCM() {
       console.log('[FCM] Token guardado en Firestore para UID:', uid);
     }
 
-    /* 6. Manejar notificaciones cuando la app está en PRIMER PLANO
+    /* 8. Manejar notificaciones cuando la app está en PRIMER PLANO
           (el Service Worker las maneja cuando está en background) */
     onMessage(messaging, payload => {
       console.log('[FCM] Mensaje en foreground:', payload);
@@ -374,7 +395,7 @@ async function initFCM() {
       const title = payload.notification?.title || '🔔 Sinergia REA';
       const body  = payload.notification?.body  || 'Tienes una alerta pendiente';
 
-      /* Mostrar como notificación nativa del sistema si el permiso lo permite */
+      /* Mostrar como notificación nativa del sistema */
       if (Notification.permission === 'granted') {
         new Notification(title, {
           body,
@@ -383,7 +404,7 @@ async function initFCM() {
         });
       }
 
-      /* Además reproducir el sonido de advertencia existente en la app */
+      /* Reproducir sonido de alerta si Howler ya está listo */
       if (typeof playAlertSound === 'function') {
         playAlertSound();
       }
@@ -393,4 +414,54 @@ async function initFCM() {
     /* FCM no es crítico — si falla, el resto de la app sigue funcionando */
     console.error('[FCM] Error al inicializar:', err.message);
   }
+}
+
+/**
+ * Espera a que un ServiceWorkerRegistration llegue al estado 'active'.
+ * ── Función auxiliar para el FIX de "push service error" ──
+ *
+ * El flujo del SW es: installing → waiting → active
+ * getToken() de FCM REQUIERE estado 'active' — si se llama antes, falla.
+ *
+ * @param {ServiceWorkerRegistration} swReg
+ * @param {number} timeoutMs - Tiempo máximo de espera (default 10s)
+ * @returns {Promise<void>}
+ */
+function esperarSWActivo(swReg, timeoutMs = 10000) {
+  return new Promise((resolve, reject) => {
+    /* Caso 1: El SW ya está activo (segunda carga, reload) → resolver de inmediato */
+    if (swReg.active) {
+      resolve();
+      return;
+    }
+
+    /* Caso 2: El SW se está instalando por primera vez → esperar statechange */
+    const sw = swReg.installing || swReg.waiting;
+    if (!sw) {
+      /* No hay SW en ningún estado — resolver de todos modos para no bloquear */
+      resolve();
+      return;
+    }
+
+    /* Timeout de seguridad: si el SW tarda más de timeoutMs, continuar igual */
+    const timer = setTimeout(() => {
+      console.warn('[FCM] Timeout esperando SW activo — continuando de todos modos.');
+      resolve();
+    }, timeoutMs);
+
+    /* Escuchar el evento statechange del SW */
+    sw.addEventListener('statechange', function onStateChange(e) {
+      if (e.target.state === 'activated') {
+        clearTimeout(timer);
+        sw.removeEventListener('statechange', onStateChange);
+        console.log('[FCM] Service Worker ahora activo — listo para getToken().');
+        resolve();
+      } else if (e.target.state === 'redundant') {
+        /* El SW fue reemplazado por otro (ej: nueva versión) */
+        clearTimeout(timer);
+        sw.removeEventListener('statechange', onStateChange);
+        reject(new Error('SW marcado como redundant — posible conflicto de versión.'));
+      }
+    });
+  });
 }
