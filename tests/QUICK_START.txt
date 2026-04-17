@@ -1,0 +1,145 @@
+🚀 QUICK START — Verificar FCM (Notificaciones Push)
+═════════════════════════════════════════════════════════════════
+
+## ⚡ 30 SEGUNDOS — Verificación Rápida
+
+1. Abre la app e inicia sesión
+2. Presiona **F12** (abre consola)
+3. Escribe y presiona ENTER:
+   ```
+   window.__FCM_Tests.quickCheck()
+   ```
+
+Verás algo como:
+```
+✅ Usuario autenticado        : Esleiter Ramiro
+✅ FCM inicializado           : ACTIVE
+✅ Token generado             : ✓
+✅ Permisos concedidos        : granted
+✅ UID disponible             : xyz123abc
+
+✅ TODO OK — FCM ACTIVO Y FUNCIONAL
+```
+
+---
+
+## 📊 ANÁLISIS COMPLETO (3 MINUTOS)
+
+Si quieres un análisis más profundo:
+
+```
+window.__FCM_Tests.runAll()
+```
+
+Te mostrará:
+- ✅ Estado del usuario
+- ✅ Estado de FCM
+- ✅ Permisos del navegador
+- ✅ Service Workers registrados
+- ✅ Registro de eventos (logs)
+- ✅ Verificación de Firestore
+
+---
+
+## 🎯 PANEL VISUAL (Solo Admin)
+
+Si eres usuario admin, aparecerá un botón **"🔍 FCM"** en la barra superior.
+
+Haz clic para abrir un panel que muestra:
+- Estado actual (✅ ACTIVO, ❌ ERROR, etc.)
+- Token completo
+- UID del usuario
+- Cronología de eventos
+
+---
+
+## ❌ PROBLEMAS COMUNES
+
+### "FCM: PERMISSION_DENIED"
+El navegador bloqueó las notificaciones.
+**Solución:** Configuración → Sinergia REA → Notificaciones → "Permitir"
+
+### "FCM: TOKEN_ERROR"
+Hay error en la comunicación con Firebase.
+**Solución:**
+1. Asegúrate de estar en **HTTPS** (no HTTP)
+2. Recarga la página con **Ctrl+F5**
+3. Verifica que Firebase Console tenga **API FCM V1 habilitada**
+
+### "No hay usuario autenticado"
+No iniciaste sesión correctamente.
+**Solución:** Inicia sesión con una cuenta autorizada
+
+### No me aparece el botón "🔍 FCM"
+No eres usuario admin.
+**Solución:** El botón solo aparece para admins. Si eres admin, ejecuta:
+```
+window.__FCM_Tests.status()
+```
+
+---
+
+## 🔧 TESTS INDIVIDUALES
+
+Puedes ejecutar cada test por separado:
+
+```javascript
+// Ver estado de FCM
+window.__FCM_Tests.status()
+
+// Ver permisos del navegador
+window.__FCM_Tests.permissions()
+
+// Ver Service Workers
+window.__FCM_Tests.serviceWorker()
+
+// Ver logs detallados
+window.__FCM_Tests.logs()
+
+// Ver usuario autenticado
+window.__FCM_Tests.user()
+
+// Verificar token en Firestore
+window.__FCM_Tests.firestore()
+```
+
+---
+
+## ✅ CHECKLIST FINAL
+
+Confirma que todo está OK:
+
+- [ ] `quickCheck()` muestra todo en verde
+- [ ] El token está guardado en Firestore
+- [ ] El navegador tiene notificaciones permitidas
+- [ ] El Service Worker está en estado "activated"
+- [ ] Puedes enviar notificación de prueba desde Firebase Console
+- [ ] Recibes la notificación en la app (abierta o cerrada)
+
+---
+
+## 📱 ENVIAR NOTIFICACIÓN DE PRUEBA
+
+1. Firebase Console → Cloud Messaging
+2. "Enviar tu primer mensaje"
+3. Llenar:
+   - Título: "Test FCM"
+   - Cuerpo: "¡Funciona!"
+   - Seleccionar por token o UID
+4. "Enviar"
+
+Deberías recibir la notificación de inmediato.
+
+---
+
+## 📚 MÁS INFORMACIÓN
+
+Ver: tests/README.md para documentación completa
+
+---
+
+¿Necesitas ayuda? Ejecuta:
+```
+window.__FCM_Tests.logs()
+```
+y comparte los últimos 5 eventos [FCM] con el equipo.
