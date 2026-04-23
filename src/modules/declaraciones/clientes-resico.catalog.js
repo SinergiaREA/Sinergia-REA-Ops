@@ -1,9 +1,9 @@
-/* ================================================================
-   SINERGIA REA — clientes-resico.catalog.js
-   Responsabilidad: Catálogo estático de clientes RESICO (626)
-   extraídos del Excel "RESUMEN_ENERO_A_DICIEMBRE_2026.xlsx".
+﻿/* ================================================================
+   SINERGIA REA â€” clientes-resico.catalog.js
+   Responsabilidad: CatÃ¡logo estÃ¡tico de clientes RESICO (626)
+   extraÃ­dos del Excel "RESUMEN_ENERO_A_DICIEMBRE_2026.xlsx".
 
-   SRP: Solo datos. No toca Firebase, UI ni lógica.
+   SRP: Solo datos. No toca Firebase, UI ni lÃ³gica.
 
    USO:
      import { CLIENTES_RESICO_EXCEL, CLIENTES_SUELDOS_EXCEL } from './clientes-resico.catalog.js';
@@ -14,9 +14,9 @@
    ================================================================ */
 
 /**
- * 25 clientes RESICO (régimen 626) del Excel de Marzo 2026.
+ * 25 clientes RESICO (rÃ©gimen 626) del Excel de Marzo 2026.
  * Campo `baja: true` indica que en el Excel aparecen como BAJA.
- * El ID usa el RFC como clave única para evitar duplicados.
+ * El ID usa el RFC como clave Ãºnica para evitar duplicados.
  */
 export const CLIENTES_RESICO_EXCEL = [
   { id: 'excel_RECJ7903097T9', name: 'JESUS REYES COBAXIN',                  rfc: 'RECJ7903097T9', giro: 'TAXISTA 0%',                    regimenFiscal: '626', fuente: 'excel', baja: false },
@@ -37,9 +37,10 @@ export const CLIENTES_RESICO_EXCEL = [
   { id: 'excel_UEMP610328T37', name: 'PETRA UTRERA MIL',                      rfc: 'UEMP610328T37', giro: 'TALLER MECANICO',               regimenFiscal: '626', fuente: 'excel', baja: false },
   { id: 'excel_OICA8808273AA', name: 'ADELA CHIGO OBIL',                      rfc: 'OICA8808273AA', giro: 'PIZZAS 16%',                    regimenFiscal: '626', fuente: 'excel', baja: false },
   { id: 'excel_OICP5801158G4', name: 'PAULINA OBIL CAGAL',                    rfc: 'OICP5801158G4', giro: 'RESTAURANT BAR 16%',            regimenFiscal: '626', fuente: 'excel', baja: false },
-  { id: 'excel_TESS890928NK2', name: 'SHEILA STEPHANIE TEPACH SOSA',          rfc: 'TESS890928NK2', giro: 'FARMACIA 16 Y 0%',              regimenFiscal: '626', fuente: 'excel', baja: false },
+
+{ id: 'excel_TESS890928NK2', name: 'SHEILA STEPHANIE TEPACH SOSA',          rfc: 'TESS890928NK2', giro: 'FARMACIA 16 Y 0%',              regimenFiscal: '626', fuente: 'excel', baja: false },
   { id: 'excel_MOCS640313AC5', name: 'SARA MOTO CHIGO',                       rfc: 'MOCS640313AC5', giro: 'TORTAS DEL TRIUNFO 16%',        regimenFiscal: '626', fuente: 'excel', baja: false },
-  { id: 'excel_MOMA8304157Z0', name: 'ANASTACIA MOLINA MUÑOZ',                rfc: 'MOMA8304157Z0', giro: 'TALLER MECANICO 16%',           regimenFiscal: '626', fuente: 'excel', baja: false },
+  { id: 'excel_MOMA8304157Z0', name: 'ANASTACIA MOLINA MUÃ‘OZ',                rfc: 'MOMA8304157Z0', giro: 'TALLER MECANICO 16%',           regimenFiscal: '626', fuente: 'excel', baja: false },
   { id: 'excel_VEVV790907IF5', name: 'VALENTINA VEGA VELA',                   rfc: 'VEVV790907IF5', giro: 'AGRICULTURA 0%',                regimenFiscal: '626', fuente: 'excel', baja: false },
   { id: 'excel_VEMY691119J49', name: 'YOLANDA LOURDES VELAZQUEZ MENDI',       rfc: 'VEMY691119J49', giro: 'COMERCIO DE TEMPORADA',         regimenFiscal: '626', fuente: 'excel', baja: true  },
   { id: 'excel_SACF920923UE5', name: 'FRANCISCO DE JESUS SAYAS COSME',        rfc: 'SACF920923UE5', giro: 'SOPORTE TECNICO 16%',           regimenFiscal: '626', fuente: 'excel', baja: false },
@@ -47,11 +48,11 @@ export const CLIENTES_RESICO_EXCEL = [
 ];
 
 /**
- * Clientes de Sueldos y Salarios (régimen 605).
- * Agregar aquí cuando se tenga la lista del Excel.
+ * Clientes de Sueldos y Salarios (rÃ©gimen 605).
+ * Agregar aquÃ­ cuando se tenga la lista del Excel.
  */
 export const CLIENTES_SUELDOS_EXCEL = [
-  // Ejemplo — reemplazar con los reales cuando estén disponibles:
+  // Ejemplo â€” reemplazar con los reales cuando estÃ©n disponibles:
   // { id: 'excel_s_RFC', name: 'NOMBRE COMPLETO', rfc: 'RFC', regimenFiscal: '605', fuente: 'excel', baja: false },
 ];
 
@@ -60,17 +61,17 @@ export const CLIENTES_SUELDOS_EXCEL = [
  * Evita duplicados comparando por RFC.
  * Los clientes de Firestore tienen prioridad (se usan sus datos si hay coincidencia de RFC).
  *
- * @param {Object[]} clientesFirestore - Clientes que ya vienen de Firestore con el régimen correcto
- * @param {Object[]} clientesExcel     - Catálogo estático del Excel (CLIENTES_RESICO_EXCEL, etc.)
+ * @param {Object[]} clientesFirestore - Clientes que ya vienen de Firestore con el rÃ©gimen correcto
+ * @param {Object[]} clientesExcel     - CatÃ¡logo estÃ¡tico del Excel (CLIENTES_RESICO_EXCEL, etc.)
  * @returns {Object[]} Lista fusionada sin duplicados
  */
 export function fusionarClientes(clientesFirestore, clientesExcel) {
-  // RFCs que ya están en Firestore
+  // RFCs que ya estÃ¡n en Firestore
   const rfcsFirestore = new Set(
     clientesFirestore.map(c => (c.rfc || '').toUpperCase().trim())
   );
 
-  // Del Excel, solo agregar los que NO están ya en Firestore por RFC
+  // Del Excel, solo agregar los que NO estÃ¡n ya en Firestore por RFC
   const soloExcel = clientesExcel.filter(c => {
     const rfc = (c.rfc || '').toUpperCase().trim();
     return rfc && !rfcsFirestore.has(rfc);
@@ -78,3 +79,4 @@ export function fusionarClientes(clientesFirestore, clientesExcel) {
 
   return [...clientesFirestore, ...soloExcel];
 }
+
